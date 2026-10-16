@@ -56,7 +56,7 @@ def main():
     def task(request):
         request_id = request.get('id')
         context.id = request_id; context.record_id = request.get('record_id')
-        control = request.get('action') in ('security', 'resume', 'status', 'list', 'tasks')
+        control = request.get('action') in ('security', 'resume', 'status', 'list', 'tasks', 'size-cache')
         try:
             with task_lock:
                 if request.get('action') == 'resume': request['defer_resume'] = bool(active)
@@ -103,7 +103,7 @@ def main():
                     target = request.get('task_id'); cancelled.add(target)
                     if target in active: manager.cancel.set()
                 emit({'id': request.get('id'), 'result': {'cancel_requested': target}}); continue
-            elif request.get('action') in ('status', 'list', 'tasks'):
+            elif request.get('action') in ('status', 'list', 'tasks', 'size-cache'):
                 monitor.submit(task, request); continue
             executor.submit(task, request)
         # Prevent queued tasks from clearing cancellation after parent EOF.

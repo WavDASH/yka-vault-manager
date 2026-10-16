@@ -176,6 +176,7 @@ class TaskDialog(QDialog):
 
 
 ACTION_NAMES = {'piv-create': 'PIV key creation', 'piv-replace': 'PIV key replacement', 'transfer': 'File transfer', 'recover-unmount': 'Mount recovery', 'create': 'Vault creation', 'register': 'Vault registration', 'import': 'Archive import',
+    'delete-vault': 'Vault deletion',
     'mount': 'Mount', 'unmount': 'Unmount', 'export': 'Archive export',
     'restore-backup': 'Backup restore', 'check-restore-backup': 'Backup check', 'test-unlock': 'Unlock verification', 'add-device': 'Key authorization',
     'remove-device': 'Authorization removal', 'set-recovery': 'Password update', 'remove-recovery': 'Password removal',

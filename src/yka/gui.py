@@ -45,6 +45,7 @@ class Window(QMainWindow):
             button = QPushButton(label); button.clicked.connect(handler); toolbar.addWidget(button); self.buttons.append(button)
         toolbar.addStretch(); refresh = QPushButton('Refresh'); refresh.clicked.connect(self.refresh_devices); toolbar.addWidget(refresh)
         self.model = VaultModel(self); self.proxy = QSortFilterProxyModel(self); self.proxy.setSourceModel(self.model)
+        self.proxy.setSortRole(Qt.UserRole + 1)
         self.proxy.setSortCaseSensitivity(Qt.CaseInsensitive)
         self.table = QTableView(); self.table.setModel(self.proxy); self.table.setSortingEnabled(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows); self.table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -52,7 +53,7 @@ class Window(QMainWindow):
         self.table.setWordWrap(False); self.table.setTextElideMode(Qt.ElideMiddle)
         style_table(self.table)
         self.table.verticalHeader().hide(); self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        for i, width in enumerate((140, 65, 220, 150, 110, 150, 110)): self.table.setColumnWidth(i, width)
+        for i, width in enumerate((125, 60, 180, 140, 95, 150, 100, 100)): self.table.setColumnWidth(i, width)
         self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)
         self.table.setColumnWidth(self.model.action_column, 90)
         self.row_actions = VaultActionDelegate(lambda: not hasattr(self, 'controller') or self.controller.busy or self.worker_dead, self.table)
@@ -87,6 +88,8 @@ class Window(QMainWindow):
         self.task_dialog = TaskDialog(self, self.controller.cancel)
         self.controller.changed.connect(self.update_actions); self.controller.changed.connect(self.execution_state); self.controller.stopped.connect(self.worker_stopped)
         self.controller.process.finished.connect(self.worker_finished)
+        from .size_controller import SizeController
+        self.sizes = SizeController(self); self.sizes.changed.connect(self.size_changed)
         self.table.selectionModel().selectionChanged.connect(self.update_actions)
         self.heartbeat = QTimer(self); self.heartbeat.timeout.connect(self.refresh); self.heartbeat.start(5000)
         self.device_timer = QTimer(self); self.device_timer.timeout.connect(self.refresh_devices); self.device_timer.start(15000)
@@ -118,6 +121,7 @@ class Window(QMainWindow):
         if self.controller.busy:
             QMessageBox.information(origin, 'Task in Progress', 'Wait for the current operation to finish, or cancel it before starting another.'); return False
         title = {'preferences': 'Saving changes', 'test-unlock': 'Verifying the selected unlock method', 'export': 'Exporting your vault',
+            'delete-vault': 'Delete Vault',
             'restore-backup': 'Authenticating and checking your backup',
             'check-restore-backup': 'Checking the backup identity',
             'transfer': 'Safe Transfer', 'move-vault': 'Moving your vault', 'recover-move': 'Finishing the interrupted move',
@@ -132,7 +136,8 @@ class Window(QMainWindow):
             # Reparenting this shared dialog before closing a Form can destroy
             # its HWND while Qt still reports isVisible() == True.
             self.task_dialog.hide(); self.task_dialog.deleteLater()
-            self.task_dialog = TaskDialog(origin, self.controller.cancel, transfer=request['action'] == 'transfer')
+            self.task_dialog = TaskDialog(origin, self.controller.cancel, transfer=request['action'] == 'transfer',
+                cancellable=request['action'] != 'delete-vault')
             self.state.setText(title + '…'); self.task_dialog.begin(title, authentication_first=request['action'] in ('check-restore-backup', 'restore-backup', 'import'))
         self.controller.send(request, before_send=prepare)
         return True
@@ -165,13 +170,22 @@ class Window(QMainWindow):
         if hasattr(owner, 'notice'): owner.notice.setText(message)
         owner.raise_(); owner.activateWindow()
         if failed and not cancelled: show_error(owner, action, message)
-        elif owner is not self or action in ('test-unlock', 'export') or cancelled:
+        elif owner is not self or action in ('test-unlock', 'export', 'delete-vault') or cancelled:
             show_result(owner, action, message, cancelled=cancelled)
 
     def refresh(self):
         if not self.worker_dead and not any(v['action'] in ('status', 'list') for v in self.controller.pending.values()):
             self.controller.send({'action': 'list'})
         self.execution_state()
+
+    def size_changed(self):
+        for record in self.model.records: self.sizes.decorate(record)
+        if self.model.records:
+            column = next(i for i, (_, field) in enumerate(self.model.columns) if field == 'size')
+            self.model.dataChanged.emit(self.model.index(0, column), self.model.index(len(self.model.records)-1, column))
+
+    def refresh_size(self, record_id):
+        if not self.worker_dead: self.sizes.refresh(record_id)
 
     def refresh_devices(self):
         if not getattr(self, 'hardware_busy', False) and not self.controller.busy and not self.worker_dead and not any(v['action'] == 'inspect' for v in self.controller.pending.values()):
@@ -253,7 +267,7 @@ class Window(QMainWindow):
         if self.controller.busy or self.worker_dead or self.mount_batch is not None or getattr(self, 'hardware_busy', False): return
         if self.security_unconfirmed:
             QMessageBox.information(self, 'Check Vault Status', 'Resolve the unconfirmed mount status before using Mount All.'); return
-        seen = {r.get('uuid') for r in self.model.records if r.get('state') not in ('Unmounted', 'Verification pending', 'Offline') and r.get('uuid')}
+        seen = {r.get('uuid') for r in self.model.records if r.get('state') not in ('Unmounted', 'Verification pending', 'Offline', 'Deletion incomplete') and r.get('uuid')}
         queue = []; skipped = 0
         for record in self.model.records:
             if record.get('state') == 'mounted': continue
@@ -340,6 +354,9 @@ class Window(QMainWindow):
         for button in (self.mount_button, self.unmount_button, self.open_button, self.manage_button):
             action = menu.addAction(button.text()); action.setEnabled(button.isEnabled()); action.triggered.connect(button.click)
         record = self.selected(); menu.addSeparator()
+        refresh_size = menu.addAction('Refresh Size')
+        refresh_size.setEnabled(not self.controller.busy and not self.worker_dead and record.get('state') in ('mounted', 'Unmounted'))
+        refresh_size.triggered.connect(lambda: self.refresh_size(record['id']))
         remove = menu.addAction('Remove from List'); remove.setEnabled(not self.controller.busy and not self.worker_dead and record.get('state') in REMOVABLE_STATES)
         remove.triggered.connect(lambda: self.remove_from_list(record))
         try: menu.exec(self.table.viewport().mapToGlobal(position))
@@ -371,6 +388,7 @@ class Window(QMainWindow):
         self.execution_state()
         import time
         if action == 'registration-info': return
+        if action == 'size-cache': self.refresh(); return
         if action == 'check-restore-backup':
             self.state.setText('The backup identity matches the selected vault.')
             self.finish_operation(action, context, '', result=result)
@@ -379,9 +397,10 @@ class Window(QMainWindow):
         if action == 'inspect': self.devices = result.get('devices', [])
         elif action in ('status', 'list'):
             records = result.get('records', [])
+            self.sizes.update(records)
             if (result.get('security_pending') is False and not self.worker_dead
                 and not any(c['action'] in ('security', 'resume') for c in self.controller.pending.values())
-                and all(r.get('state') in ('mounted', 'Unmounted', 'Verification pending', 'Offline') for r in records)):
+                and all(r.get('state') in ('mounted', 'Unmounted', 'Verification pending', 'Offline', 'Deletion incomplete') for r in records)):
                 self.security_unconfirmed = False
             for record in records:
                 keys = record.get('authorized_keys', [])
@@ -427,6 +446,7 @@ class Window(QMainWindow):
             message = {'recover-unmount': 'The mount is closed and its session was cleared. You can mount again or remove the vault from your list.', 'transfer': result.get('message', 'The copy completed.'), 'create': 'The vault was created and saved in your list.', 'mount': "The vault is mounted.", 'unmount': 'The vault was safely unmounted.',
                 'import': "The encrypted files were imported.", 'export': "The archive was saved and verified.",
                 'restore-backup': 'The backup was restored to the original folder.',
+                'delete-vault': 'The vault and its saved records were deleted.',
                 'move-vault': result.get('message', 'The vault move finished.'), 'recover-move': result.get('message', 'Move recovery finished.'),
                 'test-unlock': 'The selected key or password successfully unlocked and authenticated this vault.', 'add-device': 'The new key was authorized and verified. Export a new .yka backup.',
                 'remove-device': 'Authorization was removed. Export a new .yka backup. Earlier backups still allow this key.', 'set-recovery': 'The password was updated and verified. Export a new .yka backup.',
@@ -458,6 +478,8 @@ class Window(QMainWindow):
     def failed(self, action, message, context):
         self.execution_state()
         if action == 'registration-info': return
+        if action == 'size-cache':
+            self.logs.append('Size cache: ' + message); return
         if self.mount_batch is not None and action in ('mount', 'list', 'status', 'security', 'resume', 'protocol'):
             message += f"\nMount All stopped after {self.mount_batch['mounted']} successful mount(s)."
             self.mount_batch = None
@@ -485,23 +507,23 @@ class Window(QMainWindow):
         ready = not self.controller.busy and not self.worker_dead and self.mount_batch is None and not getattr(self, 'hardware_busy', False); record = self.selected(); state = record.get('state', '') if record else ''
         for button in self.buttons: button.setEnabled(ready)
         self.mount_button.setEnabled(ready and state in ('Unmounted', 'Verification pending'))
-        self.unmount_button.setEnabled(ready and bool(record) and state not in ('Unmounted', 'Verification pending', 'Offline'))
+        self.unmount_button.setEnabled(ready and bool(record) and state not in ('Unmounted', 'Verification pending', 'Offline', 'Deletion incomplete'))
         self.unmount_button.setText('Clean Up' if state == 'unmounted-awaiting-cleanup' else 'Recover Mount' if state in RECOVERY_STATES else 'Unmount')
         self.open_button.setEnabled(state == 'mounted' and not self.worker_dead)
-        self.manage_button.setEnabled(ready and bool(record)); self.cancel_button.setEnabled(self.controller.busy)
+        self.manage_button.setEnabled(ready and bool(record)); self.cancel_button.setEnabled(self.controller.busy and not any(c['action'] == 'delete-vault' for c in self.controller.pending.values()))
         if hasattr(self, 'menu_actions'):
             for key in ('piv',): self.menu_actions[key].setEnabled(ready)
             self.menu_actions['mount-all'].setEnabled(ready and not self.security_unconfirmed and any(r.get('state') in ('Unmounted', 'Verification pending') for r in self.model.records))
-            self.menu_actions['unmount-all'].setEnabled(not self.worker_dead and (self.controller.busy or self.security_unconfirmed or any(r.get('state') not in ('Unmounted', 'Verification pending', 'Offline') for r in self.model.records)))
+            self.menu_actions['unmount-all'].setEnabled(not self.worker_dead and (self.controller.busy or self.security_unconfirmed or any(r.get('state') not in ('Unmounted', 'Verification pending', 'Offline', 'Deletion incomplete') for r in self.model.records)))
             self.menu_actions['transfer'].setEnabled(ready and not self.security_unconfirmed and any(r.get('state') == 'mounted' for r in self.model.records))
         self.update_tray_actions()
         self.table.viewport().update()
 
     def risk(self):
-        return getattr(self, 'hardware_busy', False) or self.security_unconfirmed or self.controller.busy or any(v.get('state') not in ('Unmounted', 'Verification pending', 'Offline') for v in self.model.records)
+        return getattr(self, 'hardware_busy', False) or self.security_unconfirmed or self.controller.busy or any(v.get('state') not in ('Unmounted', 'Verification pending', 'Offline', 'Deletion incomplete') for v in self.model.records)
     def execution_state(self):
         transferring = not self.worker_dead and any(c['action'] in ('transfer', 'move-vault', 'recover-move') for c in self.controller.pending.values())
-        mounted = any(v.get('state') not in ('Unmounted', 'Verification pending', 'Offline') for v in self.model.records)
+        mounted = any(v.get('state') not in ('Unmounted', 'Verification pending', 'Offline', 'Deletion incomplete') for v in self.model.records)
         prevent = transferring or (mounted and self.settings.value('prevent_idle_sleep', False, type=bool))
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000001 if prevent else 0x80000000)
     def preferences(self): SettingsDialog(self).exec()
@@ -630,6 +652,7 @@ class Window(QMainWindow):
             elif msg.message in (0x0011, 0x0016): self.power_event('shutdown')
         return super().nativeEvent(event_type, message)
     def worker_stopped(self):
+        self.sizes.stop()
         if self.allow_close: return
         self.worker_dead = True; self.execution_state()
         self.mount_batch = None
@@ -660,6 +683,7 @@ class Window(QMainWindow):
             return
         if self.risk():
             self.allow_close = False; event.ignore(); self.request_exit(); return
+        self.sizes.stop()
         self.settings.setValue('geometry', self.saveGeometry())
         if self.controller.process.state() != QProcess.NotRunning:
             event.ignore()

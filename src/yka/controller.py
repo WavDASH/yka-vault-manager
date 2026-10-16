@@ -4,7 +4,7 @@ import sys
 from PySide6.QtCore import QObject, QProcess, Signal
 from .native import PROJECT
 
-BACKGROUND_ACTIONS = frozenset(('list', 'status', 'inspect', 'registration-info', 'tasks'))
+BACKGROUND_ACTIONS = frozenset(('list', 'status', 'inspect', 'registration-info', 'tasks', 'size-cache'))
 CONTROL_ACTIONS = BACKGROUND_ACTIONS | {'security', 'resume', 'cancel'}
 
 

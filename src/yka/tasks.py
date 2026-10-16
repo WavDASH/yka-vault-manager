@@ -80,3 +80,13 @@ class Tasks:
             except Exception:
                 result.append(dict(id=file.stem, action='Unreadable journal', state='Needs attention', detail=str(file)))
         return sorted(result, key=lambda t: t.get('created', 0), reverse=True)
+
+    def remove_vault(self, record):
+        from .registry import path_key
+        from .move import deletable_reader, delete_handle
+        with self.guard():
+            for path in self.directory.glob('*.json'):
+                task = self._load(path.stem)
+                if (task.get('record_id') == record['id'] or
+                    (not task.get('record_id') and task.get('root') and path_key(task['root']) == path_key(record['path']))):
+                    with deletable_reader(path) as (_, handle): delete_handle(handle)

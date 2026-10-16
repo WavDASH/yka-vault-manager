@@ -6,7 +6,7 @@ from .mount_recovery import RECOVERY_STATES, recovery_hint
 class VaultModel(QAbstractTableModel):
     columns = [('Name', 'name'), ('Format', 'mode'), ('Encrypted folder', 'path'),
         ('Status', 'state'), ('Mount point', 'mount_point'), ('Unlock methods', 'unlock_methods'),
-        ('Auto unmount', 'auto_unmount'), ('', 'action')]
+        ('Auto unmount', 'auto_unmount'), ('Size', 'size'), ('', 'action')]
     action_column = len(columns) - 1
 
     def __init__(self, parent=None): super().__init__(parent); self.records = []
@@ -17,6 +17,12 @@ class VaultModel(QAbstractTableModel):
     def data(self, index, role=Qt.DisplayRole):
         if not index.isValid(): return None
         record = self.records[index.row()]
+        if role == Qt.UserRole + 1:
+            if self.columns[index.column()][1] == 'size':
+                from .vault_size import cache
+                value = cache(record)
+                return value['bytes'] if value else -1
+            return self.data(index, Qt.DisplayRole)
         if role == Qt.UserRole: return record['id']
         if role == Qt.ToolTipRole and index.column() in (3, self.action_column) and record['state'] in RECOVERY_STATES:
             return recovery_hint(record)
@@ -26,6 +32,10 @@ class VaultModel(QAbstractTableModel):
                 if record['state'] in RECOVERY_STATES: return 'Recover'
                 return 'Unmount' if record['state'] == 'mounted' else 'Mount' if record['state'] in ('Unmounted', 'Verification pending') else 'Check'
             field = self.columns[index.column()][1]
+            if field == 'size':
+                from .vault_size import display
+                text, detail = display(record)
+                return detail if role == Qt.ToolTipRole else text
             if field == 'auto_unmount':
                 enabled = record.get('auto_unmount', True)
                 if role == Qt.ToolTipRole:

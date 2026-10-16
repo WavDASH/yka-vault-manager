@@ -41,7 +41,7 @@ class Registry:
         finally:
             staging.unlink(missing_ok=True)
 
-    def transaction(self, operation):
+    def transaction(self, operation, *, forget_previous=False):
         deadline = time.monotonic() + 5
         while True:
             try: guard = VaultGuard(self.directory); break
@@ -68,11 +68,34 @@ class Registry:
                 encoded = json.dumps(data, ensure_ascii=False, indent=2).encode()
                 if len(encoded) > 8 * 1024 * 1024: raise VaultError('Registry exceeds size limit. Existing records were kept.')
                 # Recovery copy only, never auto-load stale identity/provenance pins.
-                if raw is not None: self._write(self.previous, raw)
+                if raw is not None: self._write(self.previous, encoded if forget_previous else raw)
                 self._write(self.file, encoded)
             return copy.deepcopy(result)
 
     def records(self): return self.transaction(lambda d: (d['records'], False))
+
+    def save_size(self, record_id, value):
+        from .vault_size import binding, cache
+        def change(data):
+            record = next((r for r in data['records'] if r['id'] == record_id), None)
+            if record is None or not cache(dict(record, size_cache=value)) or value['binding'] != binding(record):
+                return {'saved': False}, False
+            if record.get('move_transaction') or record.get('restore_transaction') or record.get('delete_transaction'): return {'saved': False}, False
+            previous = cache(record)
+            if previous and previous['binding'] == value['binding'] and previous['measured_at'] > value['measured_at']:
+                return {'saved': False}, False
+            record['size_cache'] = {key:value[key] for key in ('binding','bytes','measured_at')}
+            return {'saved': True}, True
+        return self.transaction(change)
+
+    def invalidate_sizes(self, record_ids=None):
+        def change(data):
+            changed = False
+            for record in data['records']:
+                if record_ids is None or record['id'] in record_ids:
+                    record['size_revision'] = record.get('size_revision', 0) + 1; changed = True
+            return None, changed
+        return self.transaction(change)
 
     def get(self, record_id):
         for record in self.records():
@@ -109,6 +132,9 @@ class Registry:
 
     def remember(self, root, identity, *, name=None, pending=False, proof_digest=None, authenticated=False, allow_older_import=False, replace_origin=None, auto_unmount=None):
         def change(data):
+            from .move import within
+            if any(v.get('delete_transaction') and (within(Path(root), Path(v['path'])) or within(Path(v['path']), Path(root))) for v in data['records']):
+                raise VaultError('Finish deleting this vault before using its location.')
             previous = data['origins'].get(path_key(root), {})
             if replace_origin is not None:
                 if previous != replace_origin or previous.get('pending') or pending or not authenticated:
@@ -169,6 +195,7 @@ class Registry:
                 raise VaultError('The saved vault changed during restore. Its current folder was kept.')
             generation = self._generation(data, verified)
             record['path'] = str(destination); record['trusted'] = True
+            record.pop('size_cache', None); record['size_revision'] = record.get('size_revision', 0) + 1
             record.pop('restore_previous_path', None)
             if record.get('restore_transaction'): record['restore_transaction']['committed'] = True
             record.pop('last_mount', None)
@@ -185,7 +212,9 @@ class Registry:
         def change(data):
             record = next(v for v in data['records'] if v['id'] == record_id)
             if record.get('move_transaction'): raise VaultError('Finish the interrupted move before changing this vault.')
+            if record.get('delete_transaction'): raise VaultError('Finish deleting this vault before changing its record.')
             if 'path' in fields:
+                record.pop('size_cache', None); record['size_revision'] = record.get('size_revision', 0) + 1
                 if any(v['id'] != record_id and path_key(v['path']) == path_key(fields['path']) for v in data['records']):
                     raise VaultError('That folder is already registered.')
                 origin = data['origins'].get(path_key(record['path']))
@@ -217,15 +246,50 @@ class Registry:
                 data.setdefault('identity_history', []).append({k: previous.get(k, 0) for k in ('uuid','signing_public','generation')})
             data['origins'][destination] = copy.deepcopy(data['origins'][path_key(record['path'])])
             record['path'] = transaction['destination']; record.pop('last_mount', None)
+            record.pop('size_cache', None); record['size_revision'] = record.get('size_revision', 0) + 1
             record['move_transaction']['committed'] = True
             return record, True
         return self.transaction(change)
 
     def remove(self, record_id):
         def change(data):
+            if any(v['id'] == record_id and v.get('delete_transaction') for v in data['records']):
+                raise VaultError('Finish deleting this vault before removing its record.')
             if any(v['id'] == record_id and v.get('move_transaction') for v in data['records']):
                 raise VaultError('Finish the interrupted move before removing this vault.')
             data['records'] = [v for v in data['records'] if v['id'] != record_id]
             # Keep provenance: removing a row cannot discard pending authentication.
             return {'removed': True, 'data_deleted': False}, True
         return self.transaction(change)
+
+    def deletion_journal(self, expected, transaction):
+        def change(data):
+            from .move import within
+            record = next(v for v in data['records'] if v['id'] == expected['id'])
+            if any(record[k] != expected[k] for k in ('path','uuid','signing_public')):
+                raise VaultError('The saved vault changed. Review its location before deleting it.')
+            if record.get('last_mount') or record.get('move_transaction') or record.get('restore_transaction'):
+                raise VaultError('Unmount this vault and finish any pending operations before deleting it.')
+            if any(v['id'] != record['id'] and (within(Path(v['path']), Path(record['path'])) or within(Path(record['path']), Path(v['path']))) for v in data['records']):
+                raise VaultError('Another saved vault uses this folder. Its files were not deleted.')
+            record['delete_transaction'] = copy.deepcopy(transaction)
+            record.pop('size_cache', None)
+            return None, True
+        self.transaction(change)
+
+    def finish_deletion(self, expected, transaction):
+        def change(data):
+            record = next(v for v in data['records'] if v['id'] == expected['id'])
+            if (any(record[k] != expected[k] for k in ('path','uuid','signing_public'))
+                or record.get('delete_transaction') != transaction or transaction.get('phase') != 'finalizing'):
+                raise VaultError('The saved deletion state changed. Refresh the list before retrying.')
+            data['records'].remove(record)
+            origin = data['origins'].get(path_key(record['path']))
+            identity = (record['uuid'], record['signing_public'])
+            if origin and (origin['uuid'], origin['signing_public']) == identity:
+                data['origins'].pop(path_key(record['path']))
+            # Preserve security floors and provenance belonging to other copies.
+            if not any((v['uuid'],v['signing_public']) == identity for v in [*data['records'], *data['origins'].values()]):
+                data['identity_history'] = [v for v in data.get('identity_history', []) if (v['uuid'],v['signing_public']) != identity]
+            return None, True
+        self.transaction(change, forget_previous=True)

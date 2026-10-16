@@ -264,6 +264,12 @@ class ManageDialog(ModalDialog):
         for title, key in [('UUID', 'uuid'), ('Format', 'mode'), ('Encrypted folder', 'path'), ('State', 'state')]:
             value = str(record.get(key, '')); value = value.capitalize() if key in ('mode', 'state') else value
             label = QLineEdit(value); label.setReadOnly(True); label.setFrame(False); label.setCursorPosition(0); label.setToolTip(value); form.addRow(title, label); self.readonly_fields[key] = label
+        size_row = QHBoxLayout()
+        self.size_value = QLineEdit(); self.size_value.setReadOnly(True); self.size_value.setFrame(False)
+        self.size_refresh = QPushButton('Refresh Size')
+        self.size_refresh.clicked.connect(lambda: self.window.refresh_size(self.record_id))
+        size_row.addWidget(self.size_value, 1); size_row.addWidget(self.size_refresh)
+        form.addRow('Encrypted size', size_row)
         locate = self.locate_button = QPushButton('Locate Moved Vault…'); locate.clicked.connect(self.locate)
         move = self.move_button = QPushButton('Move Vault…'); move.clicked.connect(self.move_vault)
         locate.setEnabled(record.get('state') in ('Unmounted', 'Offline'))
@@ -279,6 +285,10 @@ class ManageDialog(ModalDialog):
         form.addRow('Mount recovery', self.recover_button)
         self.recover_hint = QLabel(); self.recover_hint.setWordWrap(True); self.recover_hint.setTextFormat(Qt.PlainText); form.addRow(self.recover_hint)
         general_layout.addStretch()
+        self.delete_button = QPushButton('Delete Vault…')
+        self.delete_button.clicked.connect(self.delete_vault)
+        delete_row = QHBoxLayout(); delete_row.addWidget(self.delete_button); delete_row.addStretch()
+        general_layout.addLayout(delete_row)
         self.tabs.addTab(general, 'General')
         security = QWidget(); sl = QVBoxLayout(security)
         self.keys = QTableWidget(0, 7); self.keys.setHorizontalHeaderLabels(['Name', 'Device / Slot', 'Key ID', 'Connected', 'Authorized', 'PIN / Touch', 'Unlock Test'])
@@ -320,6 +330,17 @@ class ManageDialog(ModalDialog):
         self.populate()
         self.window.controller.result.connect(self.updated)
         if hasattr(self.window.controller, 'changed'): self.window.controller.changed.connect(self.key_selection_changed)
+        if hasattr(self.window, 'sizes'): self.window.sizes.changed.connect(self.refresh_size_view)
+        self.refresh_size_view()
+
+    def refresh_size_view(self):
+        from .vault_size import display
+        records = getattr(getattr(self.window, 'model', None), 'records', [])
+        record = next((r for r in records if r['id'] == self.record_id), self.record)
+        text, detail = display(record)
+        self.size_value.setText(text); self.size_value.setToolTip(detail)
+        self.size_refresh.setEnabled(not self.busy and not self.window.controller.busy and not getattr(self.window, 'worker_dead', False)
+            and record.get('state') in ('mounted', 'Unmounted') and record.get('size_status') != 'calculating')
 
     @staticmethod
     def preferences_from(record):
@@ -338,7 +359,8 @@ class ManageDialog(ModalDialog):
     def preferences_edited(self, *, clear_notice=False):
         if clear_notice: self.notice.clear()
         self.save_button.setEnabled(bool(self.dirty_preferences()) and not self.busy
-            and not self.window.controller.busy and not getattr(self.window, 'worker_dead', False))
+            and not self.window.controller.busy and not getattr(self.window, 'worker_dead', False)
+            and not self.record.get('delete_transaction'))
 
     def sync_preferences(self, record, *, saved=False):
         dirty = self.dirty_preferences(); values = self.preferences_from(record)
@@ -384,12 +406,17 @@ class ManageDialog(ModalDialog):
             record = next((r for r in result.get('records', []) if r['id'] == self.record_id), None)
             if not record: self.close(); return
             if record != self.record:
+                size_fields = {'size_cache', 'size_revision', 'size_status', 'size_error'}
+                details_changed = ({k:v for k,v in record.items() if k not in size_fields} !=
+                    {k:v for k,v in self.record.items() if k not in size_fields})
                 if not self.saving_preferences and context.get('id', 0) > self.preference_fence:
                     self.sync_preferences(record)
-                self.record = record; self.populate()
+                self.record = record
+                if details_changed: self.populate()
                 for key, field in self.readonly_fields.items():
                     value = str(record.get(key, '')); field.setText(value); field.setToolTip(value); field.setCursorPosition(0)
                 self.recovery_status.setText('Password: ' + ('Enabled' if record.get('recovery') else 'Disabled'))
+            self.refresh_size_view()
         elif action == 'inspect': self.populate()
 
     def populate(self):
@@ -420,6 +447,7 @@ class ManageDialog(ModalDialog):
         return key if key in self.record.get('authorized_keys', []) else None
 
     def key_selection_changed(self):
+        self.refresh_size_view()
         key = self.selected_key()
         available = not (self.busy or self.window.controller.busy or getattr(self.window, 'worker_dead', False)
             or getattr(self.window, 'hardware_busy', False))
@@ -436,6 +464,11 @@ class ManageDialog(ModalDialog):
         self.test_unlock_button.setEnabled(test_ready)
         self.export_button.setEnabled(ready and idle and not moving)
         self.restore_button.setEnabled(ready and state == 'Unmounted' and self.record.get('trusted', False) and not moving)
+        self.delete_button.setEnabled(ready and state in ('Unmounted', 'Deletion incomplete')
+            and self.record.get('trusted', False) and not moving and not self.record.get('restore_transaction'))
+        self.delete_button.setText('Retry Deletion' if self.record.get('delete_transaction') else 'Delete Vault…')
+        self.delete_button.setToolTip('' if self.delete_button.isEnabled() else
+            'Unmount this vault and finish any pending operations before deleting it.')
         self.move_button.setEnabled(ready and self.record.get('state') == 'Unmounted' and self.record.get('trusted', False) and not moving)
         self.locate_button.setEnabled(ready and self.record.get('state') in ('Unmounted', 'Offline', 'Identity changed') and not moving)
         self.finish_move_button.setVisible(moving); self.finish_move_button.setEnabled(ready)
@@ -469,6 +502,29 @@ class ManageDialog(ModalDialog):
         self.window.submit(dict(action=action, record_id=self.record_id, **values), origin=self)
 
     def permission(self, title, **kwargs): return auth(self, title, record=self.record, **kwargs)
+
+    def delete_vault(self):
+        if not self.delete_button.isEnabled(): return
+        record = copy.deepcopy(self.record)
+        dialog = Form('Delete Vault', self)
+        for label, value in [('Vault name', record['name']), ('Encrypted folder', record['path'])]:
+            field = dialog.text(label, value); field.setReadOnly(True); field.setCursorPosition(0)
+        dialog.note('This will permanently delete this vault’s encrypted folder and its saved records from this computer. This cannot be undone.')
+        confirmed = QCheckBox('I understand that this vault will be permanently deleted.')
+        dialog.form.addRow(confirmed)
+        proceed = dialog.buttons.button(QDialogButtonBox.Ok); proceed.setText('Continue'); proceed.setEnabled(False)
+        confirmed.toggled.connect(proceed.setEnabled)
+        if dialog.exec() != QDialog.Accepted: return
+        credentials = {}
+        if (record.get('delete_transaction') or {}).get('phase') != 'finalizing':
+            authorization = AuthDialog('Authorize Deletion', self.window.devices, self, record=record)
+            authorization.note('Unlock this vault to confirm deletion.')
+            authorization.buttons.button(QDialogButtonBox.Ok).setText('Delete Vault')
+            if authorization.exec() != QDialog.Accepted: return
+            credentials = authorization.values()
+        self.window.submit(dict(action='delete-vault', record_id=record['id'], confirmed=True,
+            expected_path=record['path'], expected_uuid=record['uuid'], expected_public=record['signing_public'],
+            **credentials), origin=self, close_on_success=True)
 
     def reject(self):
         if self.can_close(): super().reject()

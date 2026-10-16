@@ -102,6 +102,7 @@ class Manager:
             if move and path_key(root) in (path_key(move['source']), path_key(move['destination'])):
                 raise VaultError('Finish the interrupted move before using this vault.')
         local = self.registry.by_path(root)
+        if local and local.get('delete_transaction'): raise VaultError('Finish deleting this vault before using it.')
         if local and local.get('restore_transaction'): raise VaultError('An interrupted restore needs recovery. Restart YKA before using this vault.')
         if local and local.get('last_mount'):
             if mount_state(BACKEND, local['last_mount']['mount_point']):
@@ -563,6 +564,15 @@ class Manager:
         runtime = {path_key(v['path']): v for v in (statuses or [])}
         records = self.registry.records()
         for record in records:
+            if record.get('delete_transaction'):
+                record['state'] = 'Deletion incomplete'
+                record['authorized_keys'] = []; record['unlock_methods'] = 'Unavailable'
+                try:
+                    body = self._body(Path(record['path']))
+                    if (body['uuid'], body['signing_public']) == (record['uuid'], record['signing_public']):
+                        record.update(recovery=body['recovery'], key_tags=body['key_tags'])
+                except Exception: pass
+                continue
             if record.get('move_transaction'):
                 record['state'] = 'Move cleanup pending' if record['move_transaction'].get('committed') else 'Move interrupted'
                 continue
@@ -852,6 +862,8 @@ class Manager:
     def dispatch(self, request):
         action = request.get('action')
         methods = {'create': self.create, 'mount': self.mount, 'unmount': self.unmount,
+            'delete-vault': self.delete_vault,
+            'size-cache': lambda a: self.registry.save_size(a['record_id'], a['size']),
             'status': self.status, 'export': self.export, 'import': self.import_,
             'restore-keyring': self.restore_keyring, 'restore-backup': self.restore_backup,
             'check-restore-backup': self.check_restore_backup,
@@ -862,10 +874,15 @@ class Manager:
             'remove-record': self.remove_record, 'test-unlock': self.test_unlock, 'device-label': self.device_label,
             **{a: self.manage_keyring for a in ('add-device', 'remove-device', 'set-recovery', 'remove-recovery')}}
         if action not in methods: raise VaultError('Unsupported operation.')
-        if request.get('record_id') and action not in ('relocate',):
+        if request.get('record_id'):
             record = self.registry.get(request['record_id'])
-            request = dict(request, root=record['path'])
-        if self.security_pending.is_set() and action not in ('security', 'resume', 'status', 'list', 'unmount', 'inspect', 'tasks', 'recover-unmount', 'remove-record'):
+            if record.get('delete_transaction') and action not in ('delete-vault', 'list', 'status', 'size-cache'):
+                raise VaultError('Finish deleting this vault before using it.')
+            if action != 'relocate': request = dict(request, root=record['path'])
+        if request.get('root') and action not in ('delete-vault', 'list', 'status', 'size-cache'):
+            local = self.registry.by_path(request['root'])
+            if local and local.get('delete_transaction'): raise VaultError('Finish deleting this vault before using it.')
+        if self.security_pending.is_set() and action not in ('security', 'resume', 'status', 'list', 'unmount', 'inspect', 'tasks', 'recover-unmount', 'remove-record', 'size-cache'):
             raise VaultError('Security event pending. Retry unmount before continuing.')
         from .tasks import TRACKED
         task = None
@@ -875,6 +892,7 @@ class Manager:
             if output: fields['output'] = output.get('path') if isinstance(output, dict) else output
             task = self.jobs.start(action, **fields)
         self.task_context.task = task
+        result = None
         try:
             result = methods[action](request)
             if task:
@@ -887,7 +905,20 @@ class Manager:
             if task: self.jobs.finish(task, 'Cancelled' if cancelled else 'Failed', detail)
             if isinstance(error, OSError): raise VaultError(detail) from None
             raise
-        finally: self.task_context.task = None
+        finally:
+            self.task_context.task = None
+            if action in ('create','register','import','mount','unmount','recover-unmount','restore-backup','restore-keyring',
+                'relocate','move-vault','recover-move','transfer','add-device','remove-device','set-recovery','remove-recovery','security','resume'):
+                try:
+                    ids = None
+                    if request.get('record_id'): ids = {request['record_id']}
+                    elif isinstance(result, dict) and result.get('record'): ids = {result['record']['id']}
+                    elif action == 'transfer' and request.get('selections'):
+                        target = request['selections'][-1].get('record_id'); ids = {target} if target else set()
+                    elif request.get('root'):
+                        record = self.registry.by_path(request['root']); ids = {record['id']} if record else set()
+                    self.registry.invalidate_sizes(ids)
+                except Exception: pass  # Advisory cache must never change an operation's outcome.
 
     def transfer(self, args):
         from .transfer import Transfer
@@ -895,6 +926,10 @@ class Manager:
 
     def move_vault(self, args):
         from .move import run
+        return run(self, args)
+
+    def delete_vault(self, args):
+        from .deletion import run
         return run(self, args)
 
     def recover_move(self, args):
