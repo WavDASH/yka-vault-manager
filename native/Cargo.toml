@@ -1,0 +1,23 @@
+[package]
+name = "yka-crypto"
+version = "1.0.0"
+edition = "2021"
+license = "GPL-3.0-only"
+
+[dependencies]
+age = { version = "=0.11.1", features = ["plugin"] }
+base64 = "0.22"
+bech32 = "0.9"
+ed25519-dalek = { version = "2", features = ["zeroize"] }
+hex = "0.4"
+p256 = { version = "0.13", features = ["ecdsa"] }
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
+zeroize = { version = "1", features = ["derive", "serde"] }
+
+[profile.release]
+panic = "abort"
+strip = true

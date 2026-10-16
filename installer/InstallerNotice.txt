@@ -1,0 +1,15 @@
+YKA Vault Manager 1.0.0
+
+This build has not completed real YubiKey hardware or clean-computer acceptance. Keep independent backups of important data.
+
+Setup installs YKA under Program Files. If WinFsp is missing, Setup installs the bundled, signed WinFsp 2.1 package. WinFsp is required to mount encrypted folders. A restart may be required, but Setup will not force one.
+
+YKA normally runs without administrator privileges. Startup at sign-in is off by default and can be enabled in Settings.
+
+Upgrading or uninstalling YKA does not remove your saved vault list, personal settings, encrypted folders or Keyrings. WinFsp is not removed because other applications may use it.
+
+Before upgrading or uninstalling, use the YKA tray menu to unmount all vaults and exit. Never store personal vaults inside the application installation directory.
+
+YKA: GPL-3.0. Third-party licenses and source references are included under _internal/docs. WinFsp — Windows File System Proxy, Copyright (C) Bill Zissimopoulos. https://github.com/winfsp/winfsp
+
+This installer is not code-signed. Windows may show an unknown-publisher warning.

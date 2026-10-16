@@ -1,0 +1,35 @@
+[
+  {
+    "name": "securefs",
+    "url": "https://github.com/netheril96/securefs/releases/download/v2.0.0/securefs-windows-amd64-release.zip",
+    "sha256": "f482e2c5f513a0de921eba2a2af507ae578b4b2957153d0791f5a7eaaf02869a",
+    "files": [
+      "securefs.exe",
+      "securefs.exe.sig"
+    ],
+    "executable_sha256": {
+      "securefs.exe": "906dc2c876769255d6f115adaaa952c6a2f98918a1edcfefafa44f6e6b9d7bd4"
+    }
+  },
+  {
+    "name": "age-plugin-yubikey",
+    "url": "https://github.com/str4d/age-plugin-yubikey/releases/download/v0.5.1/age-plugin-yubikey-v0.5.1-x86_64-windows.zip",
+    "sha256": "ba00ebd999b928994dc1f1ee0a83562f97b538f8ece75945aa6caf3695bfe3aa",
+    "files": [
+      "age-plugin-yubikey\\age-plugin-yubikey.exe"
+    ],
+    "executable_sha256": {}
+  },
+  {
+    "name": "python",
+    "version": "3.13.16",
+    "url": "https://www.python.org/ftp/python/3.13.16/python-3.13.16-embed-amd64.zip",
+    "sha256": "97dae5274cc54867065e8d5a3226e48c35017ed332a0fdb0e27d5b5821961297"
+  },
+  {
+    "name": "winfsp",
+    "version": "2.1.25156",
+    "url": "https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25156.msi",
+    "sha256": "073a70e00f77423e34bed98b86e600def93393ba5822204fac57a29324db9f7a"
+  }
+]

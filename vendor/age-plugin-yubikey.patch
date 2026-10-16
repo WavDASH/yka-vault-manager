@@ -1,0 +1,123 @@
+diff --git a/src/key.rs b/src/key.rs
+index 9f0df81..6f2972e 100644
+--- a/src/key.rs
++++ b/src/key.rs
+@@ -95,55 +95,8 @@ pub(crate) fn wait_for_readers() -> Result<Context, Error> {
+ ///
+ /// Returns `true` if any known agent was running and was successfully interrupted (or
+ /// killed if the platform doesn't support interrupts).
+-fn hunt_agents() -> bool {
+-    debug!("Sharing violation encountered, looking for agent processes");
+-
+-    use sysinfo::{ProcessExt, ProcessRefreshKind, RefreshKind, Signal, System, SystemExt};
+-
+-    let mut interrupted = false;
+-
+-    let sys =
+-        System::new_with_specifics(RefreshKind::new().with_processes(ProcessRefreshKind::new()));
+-
+-    for process in sys.processes().values() {
+-        match process.name() {
+-            "scdaemon" | "scdaemon.exe" => {
+-                // gpg-agent runs scdaemon to interact with smart cards. The canonical way
+-                // to reload it is `gpgconf --reload scdaemon`, which kills and restarts
+-                // the process. We emulate that here with SIGINT (which it listens to).
+-                if process
+-                    .kill_with(Signal::Interrupt)
+-                    .unwrap_or_else(|| process.kill())
+-                {
+-                    debug!("Stopped scdaemon (PID {})", process.pid());
+-                    interrupted = true;
+-                }
+-            }
+-            "yubikey-agent" | "yubikey-agent.exe" => {
+-                // yubikey-agent releases all YubiKey locks when it receives a SIGHUP.
+-                match process.kill_with(Signal::Hangup) {
+-                    Some(true) => {
+-                        debug!("Sent SIGHUP to yubikey-agent (PID {})", process.pid());
+-                        interrupted = true;
+-                    }
+-                    Some(false) => (),
+-                    None => debug!(
+-                        "Found yubikey-agent (PID {}) but platform doesn't support SIGHUP",
+-                        process.pid(),
+-                    ),
+-                }
+-            }
+-            _ => (),
+-        }
+-    }
+-
+-    // If we did interrupt an agent, pause briefly to allow it to finish up.
+-    if interrupted {
+-        sleep(Duration::from_millis(100));
+-    }
+-
+-    interrupted
+-}
++// YKA: never terminate another application to obtain a smart-card lock.
++fn hunt_agents() -> bool { false }
+ 
+ fn open_sesame(
+     op: impl Fn() -> Result<YubiKey, yubikey::Error>,
+@@ -732,7 +685,7 @@ impl Connection {
+         Ok(Ok(()))
+     }
+ 
+-    pub(crate) fn unwrap_file_key(&mut self, line: &RecipientLine) -> Result<FileKey, ()> {
++    pub(crate) fn unwrap_file_key(&mut self, line: &RecipientLine, mut notify: impl FnMut(&str) -> bool) -> Result<FileKey, ()> {
+         assert_eq!(self.tag, line.tag);
+ 
+         // Check if the touch policy requires a touch.
+@@ -745,6 +698,8 @@ impl Connection {
+             _ => false,
+         };
+ 
++        if !notify(if needs_touch { "YKA:TOUCH" } else { "YKA:CRYPTO" }) { return Err(()); }
++
+         // The YubiKey API for performing scalar multiplication takes the point in its
+         // uncompressed SEC-1 encoding.
+         let shared_secret = match decrypt_data(
+@@ -757,6 +712,8 @@ impl Connection {
+             Err(_) => return Err(()),
+         };
+ 
++        if !notify("YKA:CRYPTO") { return Err(()); }
++
+         // If we requested a touch and reached here, the user touched the YubiKey.
+         if needs_touch {
+             if let Some(TouchPolicy::Cached) =
+diff --git a/src/main.rs b/src/main.rs
+index 0bbb5f4..28addfc 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -315,7 +315,16 @@ fn main() -> Result<(), Error> {
+     // Isolation Marks, so we disable them for now.
+     LANGUAGE_LOADER.set_use_isolating(false);
+ 
++    if std::env::args().len() == 1 {
++        eprintln!("YKA: interactive provisioning disabled");
++        std::process::exit(2);
++    }
+     let opts = PluginOptions::parse_args_default_or_exit();
++    // YKA read-only build: hardware mutations are not available.
++    if opts.generate || opts.force {
++        eprintln!("YKA: hardware provisioning disabled; explicit approval required");
++        std::process::exit(2);
++    }
+ 
+     if [opts.generate, opts.identity, opts.list, opts.list_all]
+         .iter()
+diff --git a/src/plugin.rs b/src/plugin.rs
+index c0cd18b..42ff2a7 100644
+--- a/src/plugin.rs
++++ b/src/plugin.rs
+@@ -233,7 +233,7 @@ impl IdentityPluginV1 for IdentityPlugin {
+                 }
+ 
+                 for (stanza_index, line) in stanzas.iter().enumerate() {
+-                    match conn.unwrap_file_key(line) {
++                    match conn.unwrap_file_key(line, |message| matches!(callbacks.message(message), Ok(Ok(())))) {
+                         Ok(file_key) => {
+                             // We've managed to decrypt this file!
+                             file_keys.entry(file_index).or_insert(Ok(file_key));

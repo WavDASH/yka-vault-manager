@@ -1,0 +1,2888 @@
+[
+  {
+    "kind": "python",
+    "name": "altgraph",
+    "version": "0.17.5",
+    "license": "MIT"
+  },
+  {
+    "kind": "python",
+    "name": "backports.tarfile",
+    "version": "1.2.0",
+    "license": ""
+  },
+  {
+    "kind": "python",
+    "name": "cffi",
+    "version": "2.1.1",
+    "license": "MIT-0"
+  },
+  {
+    "kind": "python",
+    "name": "click",
+    "version": "8.5.0",
+    "license": "BSD-3-Clause"
+  },
+  {
+    "kind": "python",
+    "name": "colorama",
+    "version": "0.4.6",
+    "license": ""
+  },
+  {
+    "kind": "python",
+    "name": "cryptography",
+    "version": "50.0.2",
+    "license": "Apache-2.0 OR BSD-3-Clause"
+  },
+  {
+    "kind": "python",
+    "name": "exceptiongroup",
+    "version": "1.3.1",
+    "license": ""
+  },
+  {
+    "kind": "python",
+    "name": "fido2",
+    "version": "2.2.1",
+    "license": "Copyright (c) 2018 Yubico AB\n All rights reserved.\n\n Redistribution and use in source and binary forms, with or without\n modification, are permitted provided that the following conditions are\n met:\n\n   * Redistributions of source code must retain the above copyright\n     notice, this list of conditions and the following disclaimer.\n\n   * Redistributions in binary form must reproduce the above\n     copyright notice, this list of conditions and the following\n     disclaimer in the documentation and/or other materials provided\n     with the distribution.\n\n THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS\n \"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT\n LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR\n A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT\n OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,\n SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT\n LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,\n DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY\n THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT\n (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE\n OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE."
+  },
+  {
+    "kind": "python",
+    "name": "importlib_metadata",
+    "version": "9.0.1",
+    "license": "Apache-2.0"
+  },
+  {
+    "kind": "python",
+    "name": "iniconfig",
+    "version": "2.3.1",
+    "license": "MIT"
+  },
+  {
+    "kind": "python",
+    "name": "jaraco.classes",
+    "version": "3.4.0",
+    "license": ""
+  },
+  {
+    "kind": "python",
+    "name": "jaraco.context",
+    "version": "6.1.2",
+    "license": "MIT"
+  },
+  {
+    "kind": "python",
+    "name": "jaraco.functools",
+    "version": "4.6.0",
+    "license": "MIT"
+  },
+  {
+    "kind": "python",
+    "name": "keyring",
+    "version": "25.7.0",
+    "license": "MIT"
+  },
+  {
+    "kind": "python",
+    "name": "more-itertools",
+    "version": "11.1.0",
+    "license": "MIT"
+  },
+  {
+    "kind": "python",
+    "name": "packaging",
+    "version": "26.3",
+    "license": "Apache-2.0 OR BSD-2-Clause"
+  },
+  {
+    "kind": "python",
+    "name": "pefile",
+    "version": "2024.8.26",
+    "license": "MIT"
+  },
+  {
+    "kind": "python",
+    "name": "pip",
+    "version": "26.2.1",
+    "license": "MIT"
+  },
+  {
+    "kind": "python",
+    "name": "pluggy",
+    "version": "1.6.0",
+    "license": "MIT"
+  },
+  {
+    "kind": "python",
+    "name": "psutil",
+    "version": "7.2.2",
+    "license": "BSD-3-Clause"
+  },
+  {
+    "kind": "python",
+    "name": "pycparser",
+    "version": "3.11",
+    "license": "BSD-3-Clause"
+  },
+  {
+    "kind": "python",
+    "name": "Pygments",
+    "version": "2.21.0",
+    "license": "BSD-2-Clause"
+  },
+  {
+    "kind": "python",
+    "name": "pyinstaller",
+    "version": "6.22.3",
+    "license": "GPLv2-or-later with a special exception which allows to use PyInstaller to build and distribute non-free programs (including commercial ones)"
+  },
+  {
+    "kind": "python",
+    "name": "pyinstaller-hooks-contrib",
+    "version": "2026.8",
+    "license": ""
+  },
+  {
+    "kind": "python",
+    "name": "pyrage",
+    "version": "1.4.0",
+    "license": ""
+  },
+  {
+    "kind": "python",
+    "name": "pyscard",
+    "version": "2.3.1",
+    "license": ""
+  },
+  {
+    "kind": "python",
+    "name": "PySide6",
+    "version": "6.10.2",
+    "license": "LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only"
+  },
+  {
+    "kind": "python",
+    "name": "PySide6_Addons",
+    "version": "6.10.2",
+    "license": "LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only"
+  },
+  {
+    "kind": "python",
+    "name": "PySide6_Essentials",
+    "version": "6.10.2",
+    "license": "LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only"
+  },
+  {
+    "kind": "python",
+    "name": "pytest",
+    "version": "9.1.1",
+    "license": "MIT"
+  },
+  {
+    "kind": "python",
+    "name": "python-dateutil",
+    "version": "2.9.0.post0",
+    "license": "Dual License"
+  },
+  {
+    "kind": "python",
+    "name": "python-pskc",
+    "version": "1.4",
+    "license": "LGPL"
+  },
+  {
+    "kind": "python",
+    "name": "pywin32",
+    "version": "312",
+    "license": "PSF"
+  },
+  {
+    "kind": "python",
+    "name": "pywin32-ctypes",
+    "version": "0.2.3",
+    "license": "BSD-3-Clause"
+  },
+  {
+    "kind": "python",
+    "name": "setuptools",
+    "version": "84.0.0",
+    "license": "MIT"
+  },
+  {
+    "kind": "python",
+    "name": "shiboken6",
+    "version": "6.10.2",
+    "license": "LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only"
+  },
+  {
+    "kind": "python",
+    "name": "six",
+    "version": "1.17.0",
+    "license": "MIT"
+  },
+  {
+    "kind": "python",
+    "name": "tomli",
+    "version": "2.5.0",
+    "license": "MIT"
+  },
+  {
+    "kind": "python",
+    "name": "typing_extensions",
+    "version": "4.16.0",
+    "license": "PSF-2.0"
+  },
+  {
+    "kind": "python",
+    "name": "yubikey-manager",
+    "version": "5.9.2",
+    "license": "Copyright (c) 2015 Yubico AB\n All rights reserved.\n\n   Redistribution and use in source and binary forms, with or\n   without modification, are permitted provided that the following\n   conditions are met:\n\n    1. Redistributions of source code must retain the above copyright\n       notice, this list of conditions and the following disclaimer.\n    2. Redistributions in binary form must reproduce the above\n       copyright notice, this list of conditions and the following\n       disclaimer in the documentation and/or other materials provided\n       with the distribution.\n\n THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS\n \"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT\n LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS\n FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE\n COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,\n INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,\n BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;\n LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER\n CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT\n LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN\n ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE\n POSSIBILITY OF SUCH DAMAGE."
+  },
+  {
+    "kind": "python",
+    "name": "zipp",
+    "version": "4.1.1",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "aead",
+    "version": "0.5.2",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "age",
+    "version": "0.11.1",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "age-core",
+    "version": "0.11.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "arc-swap",
+    "version": "1.9.2",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "base16ct",
+    "version": "0.2.0",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "base64",
+    "version": "0.21.7",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "base64",
+    "version": "0.22.1",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "base64ct",
+    "version": "1.8.3",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "basic-toml",
+    "version": "0.1.10",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "bech32",
+    "version": "0.9.1",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "bitflags",
+    "version": "2.13.2",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "block-buffer",
+    "version": "0.10.4",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "block-buffer",
+    "version": "0.12.1",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "bumpalo",
+    "version": "3.20.3",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "cfg-if",
+    "version": "1.0.5",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "chacha20",
+    "version": "0.9.1",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "chacha20poly1305",
+    "version": "0.10.1",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "cipher",
+    "version": "0.4.4",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "const-oid",
+    "version": "0.9.6",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "const-oid",
+    "version": "0.10.2",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "cookie-factory",
+    "version": "0.3.3",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "cpufeatures",
+    "version": "0.2.17",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "cpufeatures",
+    "version": "0.3.1",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "crypto-bigint",
+    "version": "0.5.5",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "crypto-common",
+    "version": "0.1.7",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "crypto-common",
+    "version": "0.2.2",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "curve25519-dalek",
+    "version": "4.1.3",
+    "license": "BSD-3-Clause"
+  },
+  {
+    "kind": "rust",
+    "name": "curve25519-dalek-derive",
+    "version": "0.1.1",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "der",
+    "version": "0.7.10",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "digest",
+    "version": "0.10.7",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "digest",
+    "version": "0.11.3",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "displaydoc",
+    "version": "0.2.7",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "ecdsa",
+    "version": "0.16.9",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "ed25519",
+    "version": "2.2.3",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "ed25519-dalek",
+    "version": "2.2.0",
+    "license": "BSD-3-Clause"
+  },
+  {
+    "kind": "rust",
+    "name": "either",
+    "version": "1.19.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "elliptic-curve",
+    "version": "0.13.8",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "errno",
+    "version": "0.3.14",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "fastrand",
+    "version": "2.5.0",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "ff",
+    "version": "0.13.1",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "fiat-crypto",
+    "version": "0.2.9",
+    "license": "MIT OR Apache-2.0 OR BSD-1-Clause"
+  },
+  {
+    "kind": "rust",
+    "name": "find-crate",
+    "version": "0.6.3",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "fluent",
+    "version": "0.16.1",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "fluent-bundle",
+    "version": "0.15.3",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "fluent-langneg",
+    "version": "0.13.1",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "fluent-syntax",
+    "version": "0.11.1",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "futures",
+    "version": "0.3.34",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "futures-channel",
+    "version": "0.3.34",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "futures-core",
+    "version": "0.3.34",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "futures-executor",
+    "version": "0.3.34",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "futures-io",
+    "version": "0.3.34",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "futures-macro",
+    "version": "0.3.34",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "futures-sink",
+    "version": "0.3.34",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "futures-task",
+    "version": "0.3.34",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "futures-util",
+    "version": "0.3.34",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "generic-array",
+    "version": "0.14.7",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "getrandom",
+    "version": "0.2.17",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "getrandom",
+    "version": "0.4.3",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "group",
+    "version": "0.13.0",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "hex",
+    "version": "0.4.3",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "hkdf",
+    "version": "0.12.4",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "hmac",
+    "version": "0.12.1",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "home",
+    "version": "0.5.12",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "hybrid-array",
+    "version": "0.4.15",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "i18n-config",
+    "version": "0.4.8",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "i18n-embed",
+    "version": "0.15.4",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "i18n-embed-fl",
+    "version": "0.9.4",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "i18n-embed-impl",
+    "version": "0.8.4",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "inout",
+    "version": "0.1.4",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "intl-memoizer",
+    "version": "0.5.3",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "intl_pluralrules",
+    "version": "7.0.2",
+    "license": "Apache-2.0/MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "io_tee",
+    "version": "0.1.1",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "itoa",
+    "version": "1.0.18",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "js-sys",
+    "version": "0.3.106",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "lazy_static",
+    "version": "1.5.1",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "libc",
+    "version": "0.2.190",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "linux-raw-sys",
+    "version": "0.4.15",
+    "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "linux-raw-sys",
+    "version": "0.12.1",
+    "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "lock_api",
+    "version": "0.4.14",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "log",
+    "version": "0.4.34",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "memchr",
+    "version": "2.8.3",
+    "license": "Unlicense OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "mime",
+    "version": "0.3.17",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "mime_guess",
+    "version": "2.0.5",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "minimal-lexical",
+    "version": "0.2.1",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "nom",
+    "version": "7.1.3",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "once_cell",
+    "version": "1.21.4",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "opaque-debug",
+    "version": "0.3.1",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "p256",
+    "version": "0.13.2",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "parking_lot",
+    "version": "0.12.5",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "parking_lot_core",
+    "version": "0.9.12",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "pbkdf2",
+    "version": "0.12.2",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "pem-rfc7468",
+    "version": "0.7.0",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "pin-project",
+    "version": "1.1.13",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "pin-project-internal",
+    "version": "1.1.13",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "pin-project-lite",
+    "version": "0.2.17",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "pkcs8",
+    "version": "0.10.2",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "poly1305",
+    "version": "0.8.0",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "ppv-lite86",
+    "version": "0.2.21",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "primeorder",
+    "version": "0.13.6",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "proc-macro-error-attr2",
+    "version": "2.0.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "proc-macro-error2",
+    "version": "2.0.1",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "proc-macro2",
+    "version": "1.0.107",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "quote",
+    "version": "1.0.47",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "r-efi",
+    "version": "6.0.0",
+    "license": "MIT OR Apache-2.0 OR LGPL-2.1-or-later"
+  },
+  {
+    "kind": "rust",
+    "name": "rand",
+    "version": "0.8.8",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "rand_chacha",
+    "version": "0.3.1",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "rand_core",
+    "version": "0.6.4",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "redox_syscall",
+    "version": "0.5.18",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "rfc6979",
+    "version": "0.4.0",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "rust-embed",
+    "version": "8.13.0",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "rust-embed-impl",
+    "version": "8.13.0",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "rust-embed-utils",
+    "version": "8.13.0",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "rustc-hash",
+    "version": "1.1.0",
+    "license": "Apache-2.0/MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "rustc-hash",
+    "version": "2.1.3",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "rustc_version",
+    "version": "0.4.1",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "rustix",
+    "version": "0.38.44",
+    "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "rustix",
+    "version": "1.1.5",
+    "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "rustversion",
+    "version": "1.0.23",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "salsa20",
+    "version": "0.10.2",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "same-file",
+    "version": "1.0.6",
+    "license": "Unlicense/MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "scopeguard",
+    "version": "1.2.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "scrypt",
+    "version": "0.11.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "sec1",
+    "version": "0.7.3",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "secrecy",
+    "version": "0.10.3",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "self_cell",
+    "version": "0.10.3",
+    "license": "Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "self_cell",
+    "version": "1.3.0",
+    "license": "Apache-2.0 OR GPL-2.0-only"
+  },
+  {
+    "kind": "rust",
+    "name": "semver",
+    "version": "1.0.28",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "serde",
+    "version": "1.0.229",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "serde_core",
+    "version": "1.0.229",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "serde_derive",
+    "version": "1.0.229",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "serde_json",
+    "version": "1.0.154",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "sha2",
+    "version": "0.10.9",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "sha2",
+    "version": "0.11.1",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "signature",
+    "version": "2.2.0",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "slab",
+    "version": "0.4.12",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "smallvec",
+    "version": "1.16.3",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "spki",
+    "version": "0.7.3",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "strsim",
+    "version": "0.11.1",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "subtle",
+    "version": "2.6.1",
+    "license": "BSD-3-Clause"
+  },
+  {
+    "kind": "rust",
+    "name": "syn",
+    "version": "2.0.119",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "syn",
+    "version": "3.0.9",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "tempfile",
+    "version": "3.27.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "thiserror",
+    "version": "1.0.69",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "thiserror-impl",
+    "version": "1.0.69",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "tinystr",
+    "version": "0.8.4",
+    "license": "Unicode-3.0"
+  },
+  {
+    "kind": "rust",
+    "name": "toml",
+    "version": "0.5.11",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "type-map",
+    "version": "0.5.1",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "typenum",
+    "version": "1.20.1",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "unic-langid",
+    "version": "0.9.6",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "unic-langid-impl",
+    "version": "0.9.6",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "unicase",
+    "version": "2.10.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "unicode-ident",
+    "version": "1.0.27",
+    "license": "(MIT OR Apache-2.0) AND Unicode-3.0"
+  },
+  {
+    "kind": "rust",
+    "name": "universal-hash",
+    "version": "0.5.1",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "uuid",
+    "version": "1.28.0",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "version_check",
+    "version": "0.9.5",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "walkdir",
+    "version": "2.5.0",
+    "license": "Unlicense/MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "wasi",
+    "version": "0.11.1+wasi-snapshot-preview1",
+    "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "wasm-bindgen",
+    "version": "0.2.129",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "wasm-bindgen-macro",
+    "version": "0.2.129",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "wasm-bindgen-macro-support",
+    "version": "0.2.129",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "wasm-bindgen-shared",
+    "version": "0.2.129",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "which",
+    "version": "4.4.2",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "winapi-util",
+    "version": "0.1.11",
+    "license": "Unlicense OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "windows-link",
+    "version": "0.2.1",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "windows-sys",
+    "version": "0.59.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "windows-sys",
+    "version": "0.61.2",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "windows-targets",
+    "version": "0.52.6",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "windows_aarch64_gnullvm",
+    "version": "0.52.6",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "windows_aarch64_msvc",
+    "version": "0.52.6",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "windows_i686_gnu",
+    "version": "0.52.6",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "windows_i686_gnullvm",
+    "version": "0.52.6",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "windows_i686_msvc",
+    "version": "0.52.6",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "windows_x86_64_gnu",
+    "version": "0.52.6",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "windows_x86_64_gnullvm",
+    "version": "0.52.6",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "windows_x86_64_msvc",
+    "version": "0.52.6",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "wsl",
+    "version": "0.1.0",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "x25519-dalek",
+    "version": "2.0.1",
+    "license": "BSD-3-Clause"
+  },
+  {
+    "kind": "rust",
+    "name": "yka-crypto",
+    "version": "1.0.0",
+    "license": "GPL-3.0-only"
+  },
+  {
+    "kind": "rust",
+    "name": "zerocopy",
+    "version": "0.8.63",
+    "license": "BSD-2-Clause OR Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "zerocopy-derive",
+    "version": "0.8.63",
+    "license": "BSD-2-Clause OR Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "zerofrom",
+    "version": "0.1.8",
+    "license": "Unicode-3.0"
+  },
+  {
+    "kind": "rust",
+    "name": "zeroize",
+    "version": "1.9.1",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "zeroize_derive",
+    "version": "1.5.0",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "zerovec",
+    "version": "0.11.8",
+    "license": "Unicode-3.0"
+  },
+  {
+    "kind": "rust",
+    "name": "zmij",
+    "version": "1.0.23",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "addr2line",
+    "version": "0.22.0",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "adler",
+    "version": "1.0.2",
+    "license": "0BSD OR MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "age-core",
+    "version": "0.10.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "age-plugin",
+    "version": "0.5.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "age-plugin-yubikey",
+    "version": "0.5.1",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "aho-corasick",
+    "version": "1.1.3",
+    "license": "Unlicense OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "android-tzdata",
+    "version": "0.1.1",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "android_system_properties",
+    "version": "0.1.5",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "arc-swap",
+    "version": "1.7.1",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "asn1-rs",
+    "version": "0.5.2",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "asn1-rs-derive",
+    "version": "0.4.0",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "asn1-rs-impl",
+    "version": "0.1.0",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "autocfg",
+    "version": "1.3.0",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "backtrace",
+    "version": "0.3.73",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "base64",
+    "version": "0.13.1",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "base64ct",
+    "version": "1.6.0",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "bitflags",
+    "version": "1.3.2",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "bitflags",
+    "version": "2.6.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "block",
+    "version": "0.1.6",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "bumpalo",
+    "version": "3.16.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "byte-unit",
+    "version": "4.0.19",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "byteorder",
+    "version": "1.5.0",
+    "license": "Unlicense OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "bytes",
+    "version": "1.7.1",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "cc",
+    "version": "1.1.7",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "cfg-if",
+    "version": "1.0.0",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "chrono",
+    "version": "0.4.38",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "console",
+    "version": "0.15.8",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "core-foundation",
+    "version": "0.9.4",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "core-foundation-sys",
+    "version": "0.8.6",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "cpufeatures",
+    "version": "0.2.12",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "crc32fast",
+    "version": "1.4.2",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "crossbeam-deque",
+    "version": "0.8.5",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "crossbeam-epoch",
+    "version": "0.9.18",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "crossbeam-utils",
+    "version": "0.8.20",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "crypto-common",
+    "version": "0.1.6",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "dashmap",
+    "version": "5.5.3",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "data-encoding",
+    "version": "2.6.0",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "der",
+    "version": "0.7.9",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "der-parser",
+    "version": "8.2.0",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "deranged",
+    "version": "0.3.11",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "des",
+    "version": "0.8.1",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "dialoguer",
+    "version": "0.11.0",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "displaydoc",
+    "version": "0.2.5",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "either",
+    "version": "1.13.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "encode_unicode",
+    "version": "0.3.6",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "encoding_rs",
+    "version": "0.8.34",
+    "license": "(Apache-2.0 OR MIT) AND BSD-3-Clause"
+  },
+  {
+    "kind": "rust",
+    "name": "env_logger",
+    "version": "0.10.2",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "equivalent",
+    "version": "1.0.1",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "errno",
+    "version": "0.3.9",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "fastrand",
+    "version": "2.1.0",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "ff",
+    "version": "0.13.0",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "flate2",
+    "version": "1.0.31",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "fluent-langneg",
+    "version": "0.13.0",
+    "license": "Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "fnv",
+    "version": "1.0.7",
+    "license": "Apache-2.0 / MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "foreign-types",
+    "version": "0.3.2",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "foreign-types-shared",
+    "version": "0.1.1",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "form_urlencoded",
+    "version": "1.2.1",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "futures",
+    "version": "0.3.30",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "futures-channel",
+    "version": "0.3.30",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "futures-core",
+    "version": "0.3.30",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "futures-executor",
+    "version": "0.3.30",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "futures-io",
+    "version": "0.3.30",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "futures-macro",
+    "version": "0.3.30",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "futures-sink",
+    "version": "0.3.30",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "futures-task",
+    "version": "0.3.30",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "futures-util",
+    "version": "0.3.30",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "getrandom",
+    "version": "0.2.15",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "gimli",
+    "version": "0.29.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "gumdrop",
+    "version": "0.8.1",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "gumdrop_derive",
+    "version": "0.8.1",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "h2",
+    "version": "0.3.26",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "hashbrown",
+    "version": "0.14.5",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "hermit-abi",
+    "version": "0.3.9",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "home",
+    "version": "0.5.5",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "http",
+    "version": "0.2.12",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "http-body",
+    "version": "0.4.6",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "httparse",
+    "version": "1.9.4",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "httpdate",
+    "version": "1.0.3",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "humantime",
+    "version": "2.1.0",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "hyper",
+    "version": "0.14.30",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "hyper-tls",
+    "version": "0.5.0",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "i18n-config",
+    "version": "0.4.6",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "i18n-embed",
+    "version": "0.14.1",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "i18n-embed-fl",
+    "version": "0.8.0",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "i18n-embed-impl",
+    "version": "0.8.3",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "iana-time-zone",
+    "version": "0.1.60",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "iana-time-zone-haiku",
+    "version": "0.1.2",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "idna",
+    "version": "0.5.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "indexmap",
+    "version": "2.3.0",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "inout",
+    "version": "0.1.3",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "intl-memoizer",
+    "version": "0.5.2",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "ipnet",
+    "version": "2.9.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "is-terminal",
+    "version": "0.4.12",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "itoa",
+    "version": "1.0.11",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "js-sys",
+    "version": "0.3.69",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "lazy_static",
+    "version": "1.5.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "libc",
+    "version": "0.2.155",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "libm",
+    "version": "0.2.8",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "linux-raw-sys",
+    "version": "0.4.14",
+    "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "locale_config",
+    "version": "0.3.0",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "lock_api",
+    "version": "0.4.12",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "log",
+    "version": "0.4.22",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "malloc_buf",
+    "version": "0.0.6",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "man",
+    "version": "0.3.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "memchr",
+    "version": "2.7.4",
+    "license": "Unlicense OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "miniz_oxide",
+    "version": "0.7.4",
+    "license": "MIT OR Zlib OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "mio",
+    "version": "0.8.11",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "native-tls",
+    "version": "0.2.12",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "ntapi",
+    "version": "0.4.1",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "num-bigint",
+    "version": "0.4.6",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "num-bigint-dig",
+    "version": "0.8.4",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "num-conv",
+    "version": "0.1.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "num-integer",
+    "version": "0.1.46",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "num-iter",
+    "version": "0.1.45",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "num-traits",
+    "version": "0.2.19",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "num_cpus",
+    "version": "1.16.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "objc",
+    "version": "0.2.7",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "objc-foundation",
+    "version": "0.1.1",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "objc_id",
+    "version": "0.1.1",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "object",
+    "version": "0.36.2",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "oid-registry",
+    "version": "0.6.1",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "once_cell",
+    "version": "1.19.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "openssl",
+    "version": "0.10.66",
+    "license": "Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "openssl-macros",
+    "version": "0.1.1",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "openssl-probe",
+    "version": "0.1.5",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "openssl-sys",
+    "version": "0.9.103",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "p384",
+    "version": "0.13.0",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "parking_lot",
+    "version": "0.12.3",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "parking_lot_core",
+    "version": "0.9.10",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "pcsc",
+    "version": "2.8.2",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "pcsc-sys",
+    "version": "1.2.1",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "percent-encoding",
+    "version": "2.3.1",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "pin-project-lite",
+    "version": "0.2.14",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "pin-utils",
+    "version": "0.1.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "ping",
+    "version": "0.5.2",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "pkcs1",
+    "version": "0.7.5",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "pkg-config",
+    "version": "0.3.30",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "powerfmt",
+    "version": "0.2.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "ppv-lite86",
+    "version": "0.2.20",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "proc-macro-error",
+    "version": "1.0.4",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "proc-macro-error-attr",
+    "version": "1.0.4",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "proc-macro2",
+    "version": "1.0.86",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "quote",
+    "version": "1.0.36",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "rand",
+    "version": "0.8.5",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "rayon",
+    "version": "1.10.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "rayon-core",
+    "version": "1.12.1",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "redox_syscall",
+    "version": "0.5.3",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "regex",
+    "version": "1.10.6",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "regex-automata",
+    "version": "0.4.7",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "regex-syntax",
+    "version": "0.8.4",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "reqwest",
+    "version": "0.11.27",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "roff",
+    "version": "0.1.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "rsa",
+    "version": "0.9.0-pre.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "rust-embed",
+    "version": "8.3.0",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "rust-embed-impl",
+    "version": "8.3.0",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "rust-embed-utils",
+    "version": "8.3.0",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "rustc-demangle",
+    "version": "0.1.24",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "rusticata-macros",
+    "version": "4.1.0",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "rustix",
+    "version": "0.38.34",
+    "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "rustls-pemfile",
+    "version": "1.0.4",
+    "license": "Apache-2.0 OR ISC OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "ryu",
+    "version": "1.0.18",
+    "license": "Apache-2.0 OR BSL-1.0"
+  },
+  {
+    "kind": "rust",
+    "name": "schannel",
+    "version": "0.1.23",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "secrecy",
+    "version": "0.8.0",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "security-framework",
+    "version": "2.11.1",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "security-framework-sys",
+    "version": "2.11.1",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "self_cell",
+    "version": "1.0.4",
+    "license": "Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "serde",
+    "version": "1.0.204",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "serde_derive",
+    "version": "1.0.204",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "serde_json",
+    "version": "1.0.122",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "serde_spanned",
+    "version": "0.6.7",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "serde_urlencoded",
+    "version": "0.7.1",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "sha1",
+    "version": "0.10.6",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "sha2",
+    "version": "0.10.8",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "shell-words",
+    "version": "1.1.0",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "slab",
+    "version": "0.4.9",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "smallvec",
+    "version": "1.13.2",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "socket2",
+    "version": "0.4.10",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "socket2",
+    "version": "0.5.7",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "spin",
+    "version": "0.9.8",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "strsim",
+    "version": "0.10.0",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "syn",
+    "version": "1.0.109",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "syn",
+    "version": "2.0.72",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "sync_wrapper",
+    "version": "0.1.2",
+    "license": "Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "synstructure",
+    "version": "0.12.6",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "sysinfo",
+    "version": "0.29.11",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "system-configuration",
+    "version": "0.5.1",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "system-configuration-sys",
+    "version": "0.5.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "tempfile",
+    "version": "3.11.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "termcolor",
+    "version": "1.4.1",
+    "license": "Unlicense OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "test-with",
+    "version": "0.11.2",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "thiserror",
+    "version": "1.0.63",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "thiserror-impl",
+    "version": "1.0.63",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "time",
+    "version": "0.3.36",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "time-core",
+    "version": "0.1.2",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "time-macros",
+    "version": "0.2.18",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "tinystr",
+    "version": "0.7.6",
+    "license": "Unicode-3.0"
+  },
+  {
+    "kind": "rust",
+    "name": "tinyvec",
+    "version": "1.8.0",
+    "license": "Zlib OR Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "tinyvec_macros",
+    "version": "0.1.1",
+    "license": "MIT OR Apache-2.0 OR Zlib"
+  },
+  {
+    "kind": "rust",
+    "name": "tokio",
+    "version": "1.38.1",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "tokio-native-tls",
+    "version": "0.3.1",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "tokio-util",
+    "version": "0.7.11",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "toml",
+    "version": "0.8.19",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "toml_datetime",
+    "version": "0.6.8",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "toml_edit",
+    "version": "0.22.20",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "tower-service",
+    "version": "0.3.2",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "tracing",
+    "version": "0.1.40",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "tracing-core",
+    "version": "0.1.32",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "try-lock",
+    "version": "0.2.5",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "type-map",
+    "version": "0.5.0",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "typenum",
+    "version": "1.17.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "unic-langid",
+    "version": "0.9.5",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "unic-langid-impl",
+    "version": "0.9.5",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "unicode-bidi",
+    "version": "0.3.15",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "unicode-ident",
+    "version": "1.0.12",
+    "license": "(MIT OR Apache-2.0) AND Unicode-DFS-2016"
+  },
+  {
+    "kind": "rust",
+    "name": "unicode-normalization",
+    "version": "0.1.23",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "unicode-width",
+    "version": "0.1.13",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "unicode-xid",
+    "version": "0.2.4",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "url",
+    "version": "2.5.2",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "users",
+    "version": "0.11.0",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "utf8-width",
+    "version": "0.1.7",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "uuid",
+    "version": "1.10.0",
+    "license": "Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "vcpkg",
+    "version": "0.2.15",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "want",
+    "version": "0.3.1",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "wasi",
+    "version": "0.11.0+wasi-snapshot-preview1",
+    "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "wasm-bindgen",
+    "version": "0.2.92",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "wasm-bindgen-backend",
+    "version": "0.2.92",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "wasm-bindgen-futures",
+    "version": "0.4.42",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "wasm-bindgen-macro",
+    "version": "0.2.92",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "wasm-bindgen-macro-support",
+    "version": "0.2.92",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "wasm-bindgen-shared",
+    "version": "0.2.92",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "web-sys",
+    "version": "0.3.69",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "which",
+    "version": "5.0.0",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "winapi",
+    "version": "0.3.9",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "winapi-i686-pc-windows-gnu",
+    "version": "0.4.0",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "winapi-util",
+    "version": "0.1.9",
+    "license": "Unlicense OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "winapi-x86_64-pc-windows-gnu",
+    "version": "0.4.0",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "windows-core",
+    "version": "0.52.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "windows-sys",
+    "version": "0.48.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "windows-sys",
+    "version": "0.52.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "windows-targets",
+    "version": "0.48.5",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "windows_aarch64_gnullvm",
+    "version": "0.48.5",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "windows_aarch64_msvc",
+    "version": "0.48.5",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "windows_i686_gnu",
+    "version": "0.48.5",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "windows_i686_msvc",
+    "version": "0.48.5",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "windows_x86_64_gnu",
+    "version": "0.48.5",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "windows_x86_64_gnullvm",
+    "version": "0.48.5",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "windows_x86_64_msvc",
+    "version": "0.48.5",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "winnow",
+    "version": "0.6.18",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "winreg",
+    "version": "0.50.0",
+    "license": "MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "x509",
+    "version": "0.2.0",
+    "license": "MIT OR Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "x509-parser",
+    "version": "0.14.0",
+    "license": "MIT/Apache-2.0"
+  },
+  {
+    "kind": "rust",
+    "name": "yubikey",
+    "version": "0.8.0-pre.0",
+    "license": "BSD-2-Clause"
+  },
+  {
+    "kind": "rust",
+    "name": "zerocopy",
+    "version": "0.7.35",
+    "license": "BSD-2-Clause OR Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "zerocopy-derive",
+    "version": "0.7.35",
+    "license": "BSD-2-Clause OR Apache-2.0 OR MIT"
+  },
+  {
+    "kind": "rust",
+    "name": "zeroize",
+    "version": "1.8.1",
+    "license": "Apache-2.0 OR MIT"
+  }
+]

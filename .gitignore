@@ -1,0 +1,37 @@
+# Local environments and generated files
+.tools/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+**/target/
+**/target-review/
+build/
+dist/
+*.spec
+*.download
+*.partial
+.backups/
+test-output/
+# Downloaded dependencies (the patched plugin source remains tracked)
+vendor/downloads/
+vendor/installers/*.msi
+vendor/securefs/*.exe
+vendor/securefs/*.sig
+vendor/**/*.zip
+# Personal vaults, secrets and application state
+*.yka
+.yka-key*
+.config.pb
+.manager.lock
+.mount-state*
+.import-*
+.verified-import-proof.json
+.yka-transfer-*
+application-state/
+ui-settings.ini
+.env
+.env.*
+*.pem
+*.pfx
+*.p12
