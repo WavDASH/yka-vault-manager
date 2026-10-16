@@ -120,7 +120,7 @@ class Window(QMainWindow):
         title = {'preferences': 'Saving changes', 'test-unlock': 'Verifying the selected unlock method', 'export': 'Exporting your vault',
             'restore-backup': 'Authenticating and checking your backup',
             'check-restore-backup': 'Checking the backup identity',
-            'transfer': 'Copying files', 'move-vault': 'Moving your vault', 'recover-move': 'Finishing the interrupted move',
+            'transfer': 'Safe Transfer', 'move-vault': 'Moving your vault', 'recover-move': 'Finishing the interrupted move',
             'mount': 'Mounting your vault', 'create': 'Creating your vault', 'unmount': 'Safely unmounting your vault',
             'add-device': 'Authorizing a new YubiKey', 'import': 'Authenticating and checking your archive'}.get(request['action'], 'Updating your vault')
         def prepare(context):
@@ -132,7 +132,7 @@ class Window(QMainWindow):
             # Reparenting this shared dialog before closing a Form can destroy
             # its HWND while Qt still reports isVisible() == True.
             self.task_dialog.hide(); self.task_dialog.deleteLater()
-            self.task_dialog = TaskDialog(origin, self.controller.cancel)
+            self.task_dialog = TaskDialog(origin, self.controller.cancel, transfer=request['action'] == 'transfer')
             self.state.setText(title + '…'); self.task_dialog.begin(title, authentication_first=request['action'] in ('check-restore-backup', 'restore-backup', 'import'))
         self.controller.send(request, before_send=prepare)
         return True
@@ -475,7 +475,9 @@ class Window(QMainWindow):
     def task_progress(self, message, context):
         if context.get('id') not in self.operation_ui: return
         if self.operation_ui[context['id']].get('silent'): return
-        self.state.setText(message); self.logs.append(message); self.task_dialog.update_message(message)
+        self.state.setText(message); self.logs.append(message)
+        if 'transfer_progress' in context: self.task_dialog.update_transfer(context['transfer_progress'])
+        else: self.task_dialog.update_message(message)
         if self.destination_dialog is None:
             self.task_dialog.present(attention='touch' in message.lower())
     def update_actions(self, *_):

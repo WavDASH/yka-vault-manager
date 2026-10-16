@@ -1,4 +1,4 @@
-YKA Vault Manager 1.0.0
+YKA Vault Manager 1.0.1
 
 This build has not completed real YubiKey hardware or clean-computer acceptance. Keep independent backups of important data.
 

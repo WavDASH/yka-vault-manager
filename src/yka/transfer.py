@@ -1,21 +1,18 @@
-"""Verified file-level recovery through mounted filesystems, never ciphertext paths."""
-from contextlib import contextmanager, ExitStack
+"""Stateless file copying through mounted filesystems, never ciphertext paths."""
+from contextlib import contextmanager, ExitStack, closing
 import ctypes
 import hashlib
 import msvcrt
 import os
 from pathlib import Path
-import re
 import shutil
 import time
 import uuid
 import win32con
 import win32file
 import win32api
-import psutil
 import pywintypes
-from .windows import VaultError, safe_path, pinned_parents, guarded_reader, mount_device
-from .registry import path_key
+from .windows import VaultError, safe_path, mount_device
 
 CHUNK = 1024 * 1024
 
@@ -32,8 +29,30 @@ def copy_error(error):
     return str(error) if isinstance(error, (VaultError, OSError)) else 'The copy stopped. Check both locations before trying again.'
 
 
+def canonical_path(path):
+    """Resolve DOS aliases once, including existing parents of a new destination.
+
+    Do not memoize candidate paths: their aliases can change between operations.
+    This is a name comparison only; checked() and opened handles enforce safety.
+    """
+    path = str(path)
+    if len(path) == 2 and path[1] == ':': path += '\\'
+    original = os.path.abspath(path); candidate = Path(original); suffix = []
+    while True:
+        try:
+            long = win32api.GetLongPathName(str(candidate))
+            return os.path.normcase(os.path.join(long, *reversed(suffix)))
+        except pywintypes.error:
+            if candidate.parent == candidate: return os.path.normcase(original)
+            suffix.append(candidate.name); candidate = candidate.parent
+
+
+def inside(path, parent):
+    return path == parent or path.startswith(parent.rstrip('\\') + '\\')
+
+
 def within(path, parent):
-    return path_key(path) == path_key(parent) or path_key(parent) in [path_key(p) for p in Path(path).parents]
+    return inside(canonical_path(path), canonical_path(parent))
 
 
 def identity(stream):
@@ -46,7 +65,9 @@ def check_streams(source, paths):
     # The checked, owned mount root is already known; query that filesystem itself.
     owner = paths.owner(source)
     volume = str(owner[0]).rstrip('\\') + '\\' if owner else win32file.GetVolumePathName(str(source))
-    streams = win32file.FindStreams(str(source)) if win32api.GetVolumeInformation(volume)[3] & 0x40000 else []
+    if volume not in paths.stream_support:
+        paths.stream_support[volume] = bool(win32api.GetVolumeInformation(volume)[3] & 0x40000)
+    streams = win32file.FindStreams(str(source)) if paths.stream_support[volume] else []
     if any(name != '::$DATA' for _, name in streams):
         raise VaultError("Files with alternate data streams are not supported.")
 
@@ -56,15 +77,39 @@ class Paths:
     def __init__(self, manager):
         with manager.session_mutex:
             self.mounts = [(Path(os.path.abspath(point)), session.mount_device) for _, session, point in manager.sessions.values() if session.process.poll() is None]
+        self.mount_keys = [(point, device, canonical_path(point)) for point, device in self.mounts]
+        # Entries live only as long as their no-delete-sharing directory handle.
+        # This is not a persistent path/alias cache.
+        self.pinned = {}; self.stream_support = {}
+        self.mount_interval = 0; self.mount_checks = {}
+
+    @staticmethod
+    def key(path): return os.path.normcase(os.path.abspath(path))
+
+    def ensure_mount(self, point, device, *, force=False):
+        key = (str(point), device); now = time.monotonic()
+        if force or now >= self.mount_checks.get(key, 0):
+            if mount_device(str(point)) != device:
+                raise VaultError('The vault disconnected or its mount changed. Transfer stopped.')
+            self.mount_checks[key] = now + self.mount_interval
 
     def owner(self, path):
-        return next(((point, device) for point, device in self.mounts if within(path, point)), None)
+        pin = self.pinned.get(self.key(path))
+        if pin is not None: return pin[1]
+        if not self.mount_keys: return None
+        for point, device, _ in self.mount_keys:
+            if self.key(path) == self.key(point): return point, device
+        pin = self.pinned.get(self.key(Path(path).parent))
+        if pin is not None: return pin[1]
+        key = canonical_path(path)
+        return next(((point, device) for point, device, parent in self.mount_keys if inside(key, parent)), None)
 
     def checked(self, path, *, must_exist=False):
-        path = Path(os.path.abspath(path)); owner = self.owner(path)
+        path = Path(os.path.abspath(path))
+        owner = self.owner(path)
         if not owner: return safe_path(path, must_exist=must_exist)
         point, device = owner
-        if mount_device(str(point)) != device: raise VaultError('The mounted filesystem changed. Transfer stopped.')
+        self.ensure_mount(point, device)
         # Validate names using a non-mounted anchor, then inspect children without
         # following arbitrary links. The known mount junction itself is deliberate.
         from .archive import entry_path
@@ -89,27 +134,60 @@ class Paths:
                 raise VaultError('The opened file belongs to a different mounted filesystem.')
 
     @contextmanager
-    def parents(self, path):
-        path = self.checked(path); handles = []
+    def parents(self, path, *, enumeration=False):
+        path = Path(path)
+        # A size estimate is not authorization for later I/O. During counting,
+        # new directory handles reject links; the actual copy still revalidates
+        # the full path, including mutable attributes on pinned ancestors.
+        if not enumeration or self.key(path.parent) not in self.pinned:
+            path = self.checked(path)
+        opened = []
+        if self.key(path.parent) in self.pinned:
+            yield path; return
         try:
             for parent in reversed(path.parents):
+                key = self.key(parent)
+                if key in self.pinned: continue
                 owner = self.owner(parent)
                 flags = 0x02000000 | (0 if owner and parent == owner[0] else 0x00200000)
                 handle = win32file.CreateFile(str(parent), win32con.GENERIC_READ,
                     win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE, None, win32con.OPEN_EXISTING, flags, None)
-                handles.append(handle)
+                opened.append((key, handle))
                 if win32file.GetFileInformationByHandle(handle)[0] & 0x400: raise VaultError('A transfer parent is a link.')
                 self.validate_handle(handle, parent)
+                self.pinned[key] = (handle, owner)
             yield path
         finally:
-            for handle in handles: handle.Close()
+            for key, handle in reversed(opened):
+                self.pinned.pop(key, None); handle.Close()
+
+    @contextmanager
+    def directory(self, path, *, enumeration=False):
+        """Pin only the new directory; ancestor pins are shared by the DFS stack."""
+        path = Path(path); key = self.key(path)
+        if key in self.pinned:
+            yield path; return
+        with self.parents(path, enumeration=enumeration):
+            owner = self.owner(path)
+            flags = 0x02000000 | (0 if owner and path == owner[0] else 0x00200000)
+            handle = win32file.CreateFile(str(path), win32con.GENERIC_READ,
+                win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE, None, win32con.OPEN_EXISTING, flags, None)
+            try:
+                attributes = win32file.GetFileInformationByHandle(handle)[0]
+                if attributes & 0x400 or not attributes & win32con.FILE_ATTRIBUTE_DIRECTORY:
+                    raise VaultError('A transfer folder is unavailable or is a link.')
+                self.validate_handle(handle, path)
+                self.pinned[key] = (handle, owner)
+                yield path
+            finally:
+                self.pinned.pop(key, None); handle.Close()
 
 
 @contextmanager
 def locked_file(path, paths, *, writable=False):
-    with paths.parents(path):
+    with paths.parents(path) as checked:
         access = win32con.GENERIC_READ | (win32con.GENERIC_WRITE if writable else 0)
-        handle = win32file.CreateFile(str(paths.checked(path, must_exist=True)), access, win32con.FILE_SHARE_READ,
+        handle = win32file.CreateFile(str(checked), access, win32con.FILE_SHARE_READ,
             None, win32con.OPEN_EXISTING, win32con.FILE_FLAG_SEQUENTIAL_SCAN | 0x00200000, None)
         info = win32file.GetFileInformationByHandle(handle)
         if info[0] & (0x400 | win32con.FILE_ATTRIBUTE_DIRECTORY) or info[7] > 1:
@@ -120,65 +198,109 @@ def locked_file(path, paths, *, writable=False):
             yield stream
 
 
-def remove_partial(path, paths):
-    """Delete the checked file handle, without following links or resolving it again."""
-    from ctypes import wintypes
-    with paths.parents(path):
-        try:
-            handle = win32file.CreateFile(str(path), win32con.DELETE | win32con.GENERIC_READ,
-                win32con.FILE_SHARE_READ, None, win32con.OPEN_EXISTING, 0x00200000 | 0x02000000, None)
-        except pywintypes.error as error:
-            if error.winerror == 2: return  # Already renamed or cleaned on an earlier attempt.
-            raise
-        try:
-            info = win32file.GetFileInformationByHandle(handle)
-            if info[0] & (0x400 | win32con.FILE_ATTRIBUTE_DIRECTORY) or info[7] > 1:
-                raise VaultError('A transfer temporary file was replaced by a link or folder.')
-            paths.validate_handle(handle, path)
-            delete = ctypes.c_ubyte(1)
-            function = ctypes.WinDLL('kernel32', use_last_error=True).SetFileInformationByHandle
-            function.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
-            function.restype = wintypes.BOOL
-            if not function(int(handle), 4, ctypes.byref(delete), ctypes.sizeof(delete)):
-                raise ctypes.WinError(ctypes.get_last_error())
+@contextmanager
+def output_file(path, paths):
+    # CREATE_NEW, no write/delete sharing: nobody can modify or replace the
+    # temporary file between verification and handle-based publication.
+    handle = win32file.CreateFile(str(path), win32con.GENERIC_READ | win32con.GENERIC_WRITE | win32con.DELETE,
+        win32con.FILE_SHARE_READ, None, win32con.CREATE_NEW, win32con.FILE_FLAG_SEQUENTIAL_SCAN, None)
+    try: paths.validate_handle(handle, path)
+    except BaseException:
+        try: delete_open_file(int(handle))
+        finally: handle.Close()
+        raise
+    with os.fdopen(msvcrt.open_osfhandle(handle.Detach(), os.O_RDWR), 'w+b') as stream:
+        try: yield stream
         finally:
-            handle.Close()
+            if not getattr(stream, '_yka_published', False):
+                try: delete_open_file(msvcrt.get_osfhandle(stream.fileno()))
+                except OSError:
+                    raise VaultError(f'The copy stopped, but its temporary file could not be removed: {path}. Check the drive connection and remove this file after closing YKA.') from None
+
+
+def delete_open_file(handle):
+    """Delete only the current, still-owned temporary file on handle close."""
+    from ctypes import wintypes as W
+    delete = ctypes.c_ubyte(1)
+    function = ctypes.WinDLL('kernel32', use_last_error=True).SetFileInformationByHandle
+    function.argtypes = [W.HANDLE, ctypes.c_int, ctypes.c_void_p, W.DWORD]; function.restype = W.BOOL
+    if not function(handle, 4, ctypes.byref(delete), ctypes.sizeof(delete)):
+        raise ctypes.WinError(ctypes.get_last_error())
+
+
+def publish_file(stream, target, *, replace):
+    from ctypes import wintypes as W
+    name = str(target).encode('utf-16-le')
+    class RenameInfo(ctypes.Structure):
+        _fields_ = [('ReplaceIfExists', W.BOOLEAN), ('RootDirectory', W.HANDLE),
+                    ('FileNameLength', W.DWORD), ('FileName', W.WCHAR * (len(name) // 2 + 1))]
+    info = RenameInfo(); info.ReplaceIfExists = replace; info.FileNameLength = len(name)
+    ctypes.memmove(ctypes.addressof(info) + RenameInfo.FileName.offset, name, len(name))
+    function = ctypes.WinDLL('kernel32', use_last_error=True).SetFileInformationByHandle
+    function.argtypes = [W.HANDLE, ctypes.c_int, ctypes.c_void_p, W.DWORD]; function.restype = W.BOOL
+    if not function(msvcrt.get_osfhandle(stream.fileno()), 3, ctypes.byref(info), ctypes.sizeof(info)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    stream._yka_published = True
 
 
 class Transfer:
     def __init__(self, manager):
-        self.manager = manager; self.store = manager.jobs
-        self.paths = Paths(manager)
-        self.last_progress = 0; self.started = time.monotonic(); self.copied = 0
+        self.manager = manager; self.paths = Paths(manager)
+        self.paths.mount_interval = .25
+        self.last_progress = 0; self.copied = 0; self.completed = 0
+        self.skipped = 0; self.overwritten = 0; self.work = 0
+        self.total_bytes = None; self.total_files = 0; self.total_folders = 0
+        self.phase = None; self.phase_started = time.monotonic()
+        self.phase_bytes = {'Copying': 0, 'Verifying': 0}; self.phase_seconds = {}
+        self.weight = 1
+        self.next_mount_check = 0; self.next_space_check = 0; self.space_remaining = 0
+
+    def report(self, phase, relative='', *, force=False, complete=False):
+        now = time.monotonic()
+        if phase != self.phase:
+            if self.phase is not None:
+                self.phase_seconds[self.phase] = self.phase_seconds.get(self.phase, 0) + now-self.phase_started
+            self.phase = phase; self.phase_started = now
+        if not force and now - self.last_progress < .2: return
+        self.last_progress = now
+        if phase == 'Counting':
+            current = 'Calculating total size…'
+            summary = f'{self.total_files:,} files · {self.total_folders:,} folders · {self.counted_bytes/1024**3:.2f} GiB found'
+            percent = None
+        else:
+            current = f'{phase}: {relative}' if relative else phase
+            speed = self.phase_bytes.get(phase, 0) / 1024**2 / max(self.phase_seconds.get(phase, 0) + now-self.phase_started, .01)
+            summary = f'{self.completed:,} copied · {self.skipped:,} skipped · {self.overwritten:,} overwritten · {speed:.1f} MiB/s'
+            percent = 100 if complete else min(99, int(self.work * 100 / max((self.total_bytes or 0) * self.weight, 1)))
+        self.manager.progress(dict(kind='transfer', current=current, summary=summary, percent=percent))
 
     def check(self):
-        if self.manager.cancel.is_set() or self.manager.security_pending.is_set():
-            raise VaultError('Copy cancelled.')
-        for point, device in getattr(self, 'bindings', []):
-            if mount_device(point) != device: raise VaultError('The vault disconnected or its mount changed. Mount it again before retrying.')
+        if self.manager.cancel.is_set() or self.manager.security_pending.is_set(): raise VaultError('Copy cancelled.')
+        if time.monotonic() >= self.next_mount_check: self.check_mounts()
 
-    def digest(self, stream):
+    def check_mounts(self):
+        for point, device in getattr(self, 'bindings', []):
+            self.paths.ensure_mount(point, device, force=True)
+        self.next_mount_check = time.monotonic() + .25
+
+    def reserve_space(self, parent, size):
+        now = time.monotonic()
+        if now >= self.next_space_check or self.space_remaining < size + 4 * CHUNK:
+            self.space_remaining = shutil.disk_usage(parent).free
+            self.next_space_check = now + 1
+        if self.space_remaining < size + 4 * CHUNK:
+            raise VaultError('Not enough free destination space. Free some space and try again.')
+        self.space_remaining -= size
+
+    def digest(self, stream, relative):
         stream.seek(0); hashed = hashlib.sha256()
-        while chunk := stream.read(CHUNK): self.check(); hashed.update(chunk)
+        self.report('Verifying', relative)
+        while chunk := stream.read(CHUNK):
+            self.check(); hashed.update(chunk); self.work += len(chunk); self.phase_bytes['Verifying'] += len(chunk)
+            self.report('Verifying', relative)
         return hashed.hexdigest()
 
-    def cleanup_partials(self, task, index, item, target):
-        # Never scan a folder or accept arbitrary paths from a saved journal.
-        pattern = rf'\.yka-transfer-{re.escape(task["id"])}-{index}-[0-9a-f]{{32}}\.partial'
-        partials = [Path(value) for value in item.get('partials', [])]
-        for partial in partials:
-            if (not partial.is_absolute() or path_key(partial.parent) != path_key(target.parent)
-                    or not re.fullmatch(pattern, partial.name)):
-                raise VaultError('The saved transfer temporary-file path is invalid. No files were removed.')
-        for partial in partials:
-            self.check()
-            try:
-                remove_partial(partial, self.paths)
-            except (OSError, pywintypes.error, VaultError) as error:
-                raise VaultError('The file was copied, but its temporary files could not be removed. ' + copy_error(error)) from None
-        item['partials'] = []
-
-    def endpoints(self, paths, expected=None):
+    def endpoints(self, paths):
         records = self.manager.registry.records(); bindings = []; saved = []
         for path in paths:
             for record in records:
@@ -198,7 +320,6 @@ class Transfer:
                     if point and within(path, point): raise VaultError('This saved mount is not managed by the current worker. Mount it normally before transferring.')
                 saved.append(dict(path=str(path), record_id=None, device=mount_device(str(path if Path(path).is_dir() else Path(path).parent))))
         self.validate_direction(saved)
-        if expected and saved != expected: raise VaultError('Transfer endpoints changed. Restore the original paths and vault identities before resuming.')
         self.bindings = list(set(bindings))
         return saved
 
@@ -214,67 +335,104 @@ class Transfer:
                     (destination.get('uuid'), destination.get('signing_public'))):
                     raise VaultError('Choose a different vault or a Windows folder.')
 
-    def plan(self, args):
+    def prepare(self, args):
+        self.check()
         sources = [self.paths.checked(p, must_exist=True) for p in args['sources']]
         destination = self.paths.checked(args['destination'], must_exist=True)
-        if not sources or len(sources) > 1000 or not destination.is_dir(): raise VaultError('Choose files or folders and an existing destination folder.')
+        if not sources or len(sources) > 1000 or not destination.is_dir():
+            raise VaultError('Choose files or folders and an existing destination folder.')
         if args.get('mode', 'copy') != 'copy': raise VaultError('Move is no longer supported. Start a new copy instead.')
         if not isinstance(args.get('verify', True), bool): raise VaultError('Choose whether to verify copied files.')
+        if args.get('conflict', 'skip') not in ('skip', 'overwrite'):
+            raise VaultError('Choose whether to skip or overwrite existing files.')
         self.validate_selection(args, sources, destination)
+        names = set()
         for source in sources:
             if within(destination, source): raise VaultError('The destination cannot be inside a source folder.')
-        endpoints = self.endpoints([*sources, destination])
-        interrupted = [t for t in self.store.records()
-            if t.get('action') == 'transfer' and t.get('mode', 'copy') == 'copy'
-            and t.get('state') in ('Cancelled', 'Failed', 'Interrupted')
-            and t.get('sources') == [str(p) for p in sources]
-            and t.get('destination') == str(destination)]
-        if interrupted:
-            if len(interrupted) != 1:
-                raise VaultError('More than one interrupted copy matches these locations. Choose a new destination folder.')
-            task = self.store.load(interrupted[0]['id'])
-            if task.get('endpoints') != endpoints:
-                raise VaultError('The original transfer locations or vault identities changed. Choose a new destination folder.')
-            if task.get('verify', True) != args.get('verify', True):
-                raise VaultError('Use the same Verify copied files setting as the interrupted copy, or choose a new destination folder.')
-            # Do not silently omit files added after the original folder selection.
-            expected = {(str(self.paths.checked(f['source'])), 'file') for f in task['files']}
-            expected.update((str(destination / d), 'directory') for d in task['directories'])
-            actual = set()
-            def collect(path, relative):
-                self.check(); path = self.paths.checked(path, must_exist=True)
-                if path.is_dir():
-                    actual.add((str(destination / relative), 'directory'))
-                    for child in path.iterdir(): collect(child, relative / child.name)
-                else: actual.add((str(path), 'file'))
-                if len(actual) > 100000: raise VaultError('Split this transfer into fewer than 100,000 entries.')
-            for source in sources: collect(source, Path(source.name))
-            if actual != expected:
-                raise VaultError('The source file list changed since the interrupted copy. Choose a new destination folder.')
-            task['last_resumed'] = time.time()
-            self.manager.progress('An interrupted copy was found. Checking completed files before continuing…')
-            return task
-        files = []; directories = []; names = set()
-        def add(source, relative):
-            self.check(); self.paths.checked(source, must_exist=True)
-            key = relative.as_posix().casefold()
-            if key in names: raise VaultError('Two selected items have the same destination name.')
-            names.add(key)
-            if len(names) > 100000: raise VaultError('Split this transfer into fewer than 100,000 entries.')
-            if source.is_dir():
-                directories.append(str(relative))
-                for child in sorted(source.iterdir()): add(child, relative / child.name)
-            else:
-                with locked_file(source, self.paths) as stream:
-                    check_streams(source, self.paths)
-                    st = identity(stream)
-                target = self.paths.checked(destination / relative)
-                if target.exists(): raise VaultError(f'A file named {relative} already exists in the destination folder. Choose another location.')
-                files.append(dict(source=str(source), relative=str(relative), original=st, state='Pending', size=st[2]))
-        for source in sources: add(source, Path(source.name))
-        return self.store.start('transfer', sources=[str(p) for p in sources], destination=str(destination),
-            mode='copy', verify=args.get('verify', True), endpoints=endpoints, files=files, directories=directories,
-            total_bytes=sum(f['size'] for f in files), completed_files=0, total_files=len(files))
+            if source.name.casefold() in names: raise VaultError('Two selected items have the same destination name.')
+            names.add(source.name.casefold())
+        self.endpoints([*sources, destination])
+        return sources, destination
+
+    def measure(self, sources):
+        # Separate metadata-only pass. No per-file path canonicalization, mount
+        # query or content open. Directory pins bound link/replacement races;
+        # retain only one enumerator/handle per directory depth.
+        self.counted_bytes = 0; self.report('Counting', force=True)
+        frames = []
+        def descend(path):
+            scope = ExitStack()
+            try:
+                scope.enter_context(self.paths.directory(path, enumeration=True))
+                entries = scope.enter_context(os.scandir(path))
+                frames.append((entries, scope))
+            except BaseException:
+                scope.close(); raise
+        try:
+            for source in sources:
+                self.check()
+                source = self.paths.checked(source, must_exist=True)
+                if source.is_dir():
+                    self.total_folders += 1; descend(source)
+                else:
+                    self.total_files += 1; self.counted_bytes += source.stat().st_size
+                while frames:
+                    self.check()
+                    entries, scope = frames[-1]
+                    entry = next(entries, None)
+                    if entry is None:
+                        frames.pop(); scope.close(); continue
+                    info = entry.stat(follow_symlinks=False)
+                    if info.st_file_attributes & 0x400:
+                        raise VaultError('Links inside a transfer path are not supported.')
+                    if info.st_file_attributes & win32con.FILE_ATTRIBUTE_DIRECTORY:
+                        self.total_folders += 1; descend(entry.path)
+                    else:
+                        self.total_files += 1; self.counted_bytes += info.st_size
+                    self.report('Counting')
+        finally:
+            for _, scope in reversed(frames): scope.close()
+        self.check(); self.check_mounts()
+        self.total_bytes = self.counted_bytes
+
+    def walk(self, sources, *, metadata=False):
+        """Depth-first enumeration, with only one iterator per directory depth.
+
+        The consumer sends False to prune a skipped directory. Directory handles
+        prevent path replacement while enumerating; files are checked at open.
+        """
+        frames = [(iter((Path(s), Path(Path(s).name), None, None) for s in sources), None)]
+        try:
+            while frames:
+                self.check()
+                iterator, scope = frames[-1]
+                try: source, relative, directory, size = next(iterator)
+                except StopIteration:
+                    frames.pop()
+                    if scope: scope.close()
+                    continue
+                if directory is None:
+                    source = self.paths.checked(source, must_exist=True)
+                    directory = source.is_dir()
+                    size = source.stat().st_size if metadata and not directory else 0
+                descend = yield source, relative, directory, size
+                if directory and descend:
+                    scope = ExitStack()
+                    try:
+                        scope.enter_context(self.paths.directory(source))
+                        entries = scope.enter_context(os.scandir(source))
+                        # Bind relative now; generator closures must not use the next loop's path.
+                        def children(entries, parent):
+                            for entry in entries:
+                                directory = entry.is_dir(follow_symlinks=False)
+                                size = entry.stat(follow_symlinks=False).st_size if metadata and not directory else 0
+                                yield Path(entry.path), parent / entry.name, directory, size
+                        frames.append((children(entries, relative), scope))
+                    except BaseException:
+                        scope.close(); raise
+        finally:
+            for _, scope in reversed(frames):
+                if scope: scope.close()
 
     def validate_selection(self, args, sources, destination):
         # Optional UI selection pins: direct recovery clients retain path-based use.
@@ -294,94 +452,89 @@ class Transfer:
 
     def run(self, args):
         try: return self._run(args)
-        except pywintypes.error as error: raise VaultError(copy_error(error)) from None
+        except (OSError, pywintypes.error) as error: raise VaultError(copy_error(error)) from None
 
     def _run(self, args):
-        task = self.store.load(args['task_id']) if args.get('task_id') else self.plan(args)
-        if task.get('action') != 'transfer': raise VaultError('This task cannot be resumed as a copy.')
-        if task.get('mode', 'copy') != 'copy':
-            raise VaultError("This older Move task cannot be resumed. Review its files and start a new copy.")
-        verify_content = task.get('verify', True)  # Older copy tasks always verified.
-        if not isinstance(verify_content, bool): raise VaultError('The saved verification setting is invalid.')
-        self.endpoints([*task['sources'], task['destination']], task['endpoints'])
-        from .windows import VaultGuard
-        lease = self.store.directory / task['id']; lease.mkdir(exist_ok=True)
-        with VaultGuard(lease), ExitStack() as pins:
-            task.update(state='Running', pid=os.getpid(), process_started=psutil.Process().create_time())
-            if args.get('task_id'): task['last_resumed'] = time.time()
-            task.pop('ended', None)
-            self.store.save(task)
+        sources, destination = self.prepare(args)
+        verify = args.get('verify', True); policy = args.get('conflict', 'skip')
+        self.weight = 2 if verify else 1
+        self.measure(sources)
+        with self.paths.directory(destination), closing(self.walk(sources, metadata=True)) as walker:
+            target_stack = []
             try:
-                destination = self.paths.checked(task['destination'], must_exist=True)
-                pins.enter_context(self.paths.parents(destination / '.yka-transfer-pin'))
-                for relative in task['directories']:
-                    target = self.paths.checked(destination / relative)
-                    if not within(target, destination): raise VaultError('Invalid task destination.')
-                    with self.paths.parents(target): target.mkdir(exist_ok=True)
-                processed = 0
-                for index, item in enumerate(task['files']):
-                    task['_dirty_file'] = (index, item)
+                entry = next(walker, None)
+                while entry is not None:
+                    source, relative, directory, size = entry
                     self.check()
-                    source = self.paths.checked(item['source'])
-                    if not any(within(source, selected) for selected in task['sources']): raise VaultError('Invalid source in task journal.')
-                    target = self.paths.checked(destination / item['relative'])
-                    if not within(target, destination) or target == destination: raise VaultError('Invalid task destination.')
-                    self.manager.progress(f"Checking {item['relative']} — {index}/{len(task['files'])} files completed.")
-                    with locked_file(source, self.paths) as original:
-                        check_streams(source, self.paths)
-                        if identity(original) != item['original']: raise VaultError(f"The source changed: {item['relative']}. Start a new copy to another folder.")
-                        if target.exists():
-                            if not verify_content:
-                                raise VaultError("This copy was not verified and already has destination files. Start a new copy to an empty folder.")
-                            if not item.get('digest') or item['state'] not in ('Publishing', 'Verified'):
-                                raise VaultError('The destination already contains this file. Choose another folder.')
-                            expected = self.digest(original)
-                            with locked_file(target, self.paths, writable=True) as copied_file:
-                                os.fsync(copied_file.fileno())
-                                if expected != item['digest'] or self.digest(copied_file) != expected: raise VaultError('Source or completed destination content changed. Resume stopped. Start a new copy to another folder.')
-                            item['state'] = 'Verified'
-                        else:
-                            if verify_content and item.get('digest') and self.digest(original) != item['digest']: raise VaultError('Source content changed since the previous attempt.')
-                            if shutil.disk_usage(destination).free < item['size'] + 4 * CHUNK: raise VaultError('Not enough free destination space. Free some space and try again.')
-                            temporary = target.with_name(f'.yka-transfer-{task["id"]}-{index}-{uuid.uuid4().hex}.partial')
-                            item.setdefault('partials', []).append(str(temporary)); item['state'] = 'Copying'; self.store.save(task)
-                            hashed = hashlib.sha256() if verify_content else None
-                            original.seek(0); copied = 0
-                            with self.paths.parents(temporary), temporary.open('xb') as output:
-                                self.paths.validate_handle(msvcrt.get_osfhandle(output.fileno()), temporary)
-                                while chunk := original.read(CHUNK):
-                                    self.check(); output.write(chunk)
-                                    if hashed is not None: hashed.update(chunk)
-                                    copied += len(chunk); self.copied += len(chunk)
-                                    now = time.monotonic()
-                                    if now - self.last_progress >= .25:
-                                        self.manager.progress(f"Copying {item['relative']} — {index}/{len(task['files'])} files completed ({(processed+copied)*100//max(task['total_bytes'],1)}%) · {self.copied/1024**2/max(now-self.started,.01):.1f} MiB/s")
-                                        self.last_progress = now
-                                output.flush(); os.fsync(output.fileno())
-                            if copied != item['size'] or identity(original) != item['original']: raise VaultError('The source changed during copying. Start a new copy to another folder.')
-                            if verify_content:
-                                self.manager.progress(f"Verifying {item['relative']}…")
-                                with locked_file(temporary, self.paths) as copied_file:
-                                    if self.digest(copied_file) != hashed.hexdigest(): raise VaultError('The copied file does not match its source. Start a new copy to another folder.')
-                                item['digest'] = hashed.hexdigest()
-                            item['state'] = 'Publishing'; self.store.save(task)
-                            self.check()
-                            with self.paths.parents(target): os.rename(temporary, target)
-                            with locked_file(target, self.paths, writable=True) as copied_file:
-                                os.fsync(copied_file.fileno())
-                                if identity(copied_file)[2] != item['size']: raise VaultError('The destination file has the wrong size. Start a new copy to another folder.')
-                                if verify_content and self.digest(copied_file) != item['digest']: raise VaultError('The copied file does not match its source. Start a new copy to another folder.')
-                            item['state'] = 'Verified' if verify_content else 'Copied'
-                    self.cleanup_partials(task, index, item, target)
-                    processed += item['size']; task['completed_files'] = index + 1; self.store.save(task)
-                count = len(task['files'])
-                message = f"{count} file{'s were' if count != 1 else ' was'} copied" + (' and verified successfully.' if verify_content else ' successfully. Content verification was skipped.')
-                self.store.finish(task, 'Completed', message)
-                return dict(task_id=task['id'], completed_files=count, verified=verify_content, path=task['destination'], message=message)
-            except BaseException as error:
-                state = 'Cancelled' if self.manager.cancel.is_set() or self.manager.security_pending.is_set() else 'Failed'
-                reason = copy_error(error)
-                detail = f"{task.get('completed_files', 0)} of {len(task['files'])} files completed. {reason}"
-                self.store.finish(task, state, detail)
-                if isinstance(error, (VaultError, OSError, pywintypes.error)): raise VaultError(detail) from None
-                raise
+                    candidate = destination / relative
+                    while target_stack and target_stack[-1][0] not in candidate.parents:
+                        _, scope = target_stack.pop(); scope.close()
+                    target = self.paths.checked(candidate)
+                    if not target.is_relative_to(destination) or target == destination: raise VaultError('Invalid copy destination.')
+                    descend = True
+                    if directory:
+                        self.report('Preparing folder', str(relative))
+                        with self.paths.parents(target):
+                            if target.exists() and not target.is_dir():
+                                self.skipped += 1; descend = False
+                            else:
+                                target.mkdir(exist_ok=True)
+                                scope = ExitStack()
+                                try: scope.enter_context(self.paths.directory(target))
+                                except BaseException:
+                                    scope.close(); raise
+                                target_stack.append((target, scope))
+                    else:
+                        self.copy_file(source, target, str(relative), size, verify, policy)
+                    try: entry = walker.send(descend)
+                    except StopIteration: entry = None
+            finally:
+                for _, scope in reversed(target_stack): scope.close()
+        self.check(); self.check_mounts(); self.report('Copy complete', complete=True, force=True)
+        message = f"{self.completed:,} file{'s were' if self.completed != 1 else ' was'} copied" + (' and verified successfully.' if verify else ' successfully. Content verification was skipped.')
+        if self.skipped: message += f' {self.skipped:,} existing items were skipped.'
+        if self.overwritten: message += f' {self.overwritten:,} existing files were overwritten.'
+        return dict(completed_files=self.completed, skipped_items=self.skipped, overwritten_files=self.overwritten,
+                    verified=verify, path=str(destination), message=message)
+
+    def copy_file(self, source, target, relative, listed_size, verify, policy):
+        self.report('Copying', relative)
+        exists = target.exists()
+        if exists and (policy == 'skip' or target.is_dir()):
+            self.skipped += 1; self.work += listed_size * self.weight
+            self.report('Skipping', relative); return
+        self.check(); self.check_mounts()
+        with locked_file(source, self.paths) as original:
+            check_streams(source, self.paths)
+            stamp = identity(original); size = stamp[2]
+            self.reserve_space(target.parent, size)
+            temporary = target.with_name(f'.yka-transfer-{uuid.uuid4().hex}.partial')
+            hashed = hashlib.sha256() if verify else None
+            copied = 0; work_before = self.work
+            with self.paths.parents(temporary), output_file(temporary, self.paths) as output:
+                while chunk := original.read(CHUNK):
+                    self.check(); output.write(chunk)
+                    if hashed is not None: hashed.update(chunk)
+                    copied += len(chunk); self.copied += len(chunk); self.work += len(chunk); self.phase_bytes['Copying'] += len(chunk)
+                    self.report('Copying', relative)
+                output.flush(); os.fsync(output.fileno())
+                if copied != size or identity(original) != stamp:
+                    raise VaultError('The source changed during copying. Copy stopped.')
+                if verify and self.digest(output, relative) != hashed.hexdigest():
+                    raise VaultError('The copied file does not match its source. Copy stopped.')
+                self.check(); self.check_mounts(); self.paths.checked(target)
+                # The verified temporary stays exclusively open until publication.
+                # Try no-replace first, so the overwrite counter reflects actual
+                # replacements even if a new destination appeared during copying.
+                try: publish_file(output, target, replace=False)
+                except OSError as error:
+                    if error.winerror not in (80, 183, 5): raise
+                    self.paths.checked(target)
+                    if not target.exists(): raise
+                    if policy == 'skip' or target.is_dir():
+                        self.skipped += 1; self.work = work_before + size * self.weight
+                        return
+                    publish_file(output, target, replace=True)
+                    self.overwritten += 1
+                os.fsync(output.fileno()); self.completed += 1
+            self.report('Copying', relative)

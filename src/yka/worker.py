@@ -46,8 +46,13 @@ def main():
             raise VaultError('The save dialog timed out. Start the operation again to authenticate.')
         finally:
             with task_lock: destinations.pop(task_id, None)
-    manager = Manager(lambda text: emit({'event': 'progress', 'message': text,
-        'id': getattr(context, 'id', None), 'record_id': getattr(context, 'record_id', None)}), destination)
+    def progress(value):
+        payload = {'event': 'progress', 'id': getattr(context, 'id', None), 'record_id': getattr(context, 'record_id', None)}
+        if isinstance(value, dict) and value.get('kind') == 'transfer':
+            payload.update(message=value['current'], transfer=value)
+        else: payload['message'] = value
+        emit(payload)
+    manager = Manager(progress, destination)
     def task(request):
         request_id = request.get('id')
         context.id = request_id; context.record_id = request.get('record_id')

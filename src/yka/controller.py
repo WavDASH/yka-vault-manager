@@ -95,6 +95,13 @@ class Controller(QObject):
                 context = self.pending.get(reply.get('id'))
                 if context and context['action'] not in CONTROL_ACTIONS:
                     if not isinstance(reply.get('message'), str): self.protocol_failed(); return
+                    if 'transfer' in reply:
+                        value = reply['transfer']
+                        if (context['action'] != 'transfer' or not isinstance(value, dict)
+                            or not isinstance(value.get('current'), str) or not isinstance(value.get('summary'), str)
+                            or (value.get('percent') is not None and (type(value['percent']) is not int or not 0 <= value['percent'] <= 100))):
+                            self.protocol_failed(); return
+                        context = dict(context, transfer_progress=value)
                     self.progress.emit(reply['message'], context)
                 continue
             if reply.get('event') == 'destination':

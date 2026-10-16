@@ -4,8 +4,7 @@ import os
 from pathlib import Path
 import time
 import uuid
-import sqlite3
-from contextlib import contextmanager, closing
+from contextlib import contextmanager
 import psutil
 from .archive import unique_json
 from .windows import VaultError, VaultGuard, safe_path, guarded_reader, private_directory
@@ -36,22 +35,6 @@ class Tasks:
         with lock: yield
 
     def save(self, task):
-        # File manifests use one row per file. Never rewrite a large manifest for
-        # every copied file; FULL synchronous commits retain the recovery boundary.
-        if task.get('action') == 'transfer':
-            database = safe_path(self.directory / (task['id'] + '.sqlite3'))
-            with self.guard():
-                with closing(sqlite3.connect(database)) as db, db:
-                    db.execute('pragma synchronous=FULL')
-                    db.execute('create table if not exists files (position integer primary key, value text not null)')
-                    db.execute('create table if not exists directories (position integer primary key, value text not null)')
-                    if not task.get('_manifest_saved'):
-                        db.executemany('insert into files values (?,?)', ((i, json.dumps(item)) for i,item in enumerate(task['files'])))
-                        db.executemany('insert into directories values (?,?)', enumerate(task['directories']))
-                    if '_dirty_file' in task:
-                        i, item = task['_dirty_file']
-                        db.execute('update files set value=? where position=?', (json.dumps(item), i))
-                task['_manifest_saved'] = True
         encoded = json.dumps({k:v for k,v in task.items() if k not in ('files','directories') and not k.startswith('_')}, ensure_ascii=False).encode('utf-8')
         if len(encoded) > 32 * 1024 * 1024: raise VaultError('Task journal is too large.')
         with self.guard():
@@ -61,24 +44,14 @@ class Tasks:
                 out.write(encoded); out.flush(); os.fsync(out.fileno())
             os.replace(temporary, target)
 
-    def load(self, ident, *, manifest=True):
-        with self.guard(): return self._load(ident, manifest=manifest)
+    def load(self, ident):
+        with self.guard(): return self._load(ident)
 
-    def _load(self, ident, *, manifest=True):
+    def _load(self, ident):
         with guarded_reader(self.path(ident)) as stream: raw = stream.read(32 * 1024 * 1024 + 1)
         if len(raw) > 32 * 1024 * 1024: raise VaultError('Task journal is too large.')
         task = unique_json(raw)
         if task.get('id') != ident or task.get('schema') != 1: raise VaultError('Invalid task journal. Keep it for inspection.')
-        if manifest and task.get('action') == 'transfer':
-            database = safe_path(self.directory / (ident + '.sqlite3'), must_exist=True)
-            with closing(sqlite3.connect(f'{database.as_uri()}?mode=ro', uri=True)) as db:
-                rows = db.execute('select value from files order by position').fetchmany(100001)
-                if len(rows) > 100000: raise VaultError('Transfer journal exceeds the file limit.')
-                task['files'] = [unique_json(row[0]) for row in rows]
-                directories = db.execute('select value from directories order by position').fetchmany(100001)
-                if len(directories) > 100000: raise VaultError('Transfer journal exceeds the folder limit.')
-                task['directories'] = [r[0] for r in directories]
-                task['_manifest_saved'] = True
         return task
 
     def start(self, action, **fields):
@@ -96,12 +69,13 @@ class Tasks:
         result = []
         for file in self.directory.glob('*.json'):
             try:
-                task = self.load(file.stem, manifest=False)
+                task = self.load(file.stem)
                 if task['state'] == 'Running':
                     try: alive = psutil.Process(task['pid']).create_time() == task['process_started']
                     except psutil.Error: alive = False
                     if not alive: task['state'] = 'Interrupted'
-                # File manifests stay private to the service, not large IPC responses.
+                # Ignore retired transfer records; only other operations use this journal.
+                if task.get('action') == 'transfer': continue
                 result.append({k: v for k, v in task.items() if k not in ('files', 'directories') and not k.startswith('_')})
             except Exception:
                 result.append(dict(id=file.stem, action='Unreadable journal', state='Needs attention', detail=str(file)))

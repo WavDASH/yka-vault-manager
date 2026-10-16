@@ -7,7 +7,7 @@ A Windows desktop app for creating and managing encrypted folders with a **YubiK
 - **Encrypted vaults** — Create SecureFS Lite or Full vaults and mount them to a drive letter or an empty folder.
 - **Flexible unlocking** — Use a password or one of multiple authorized YubiKey PIV keys; test unlock methods without mounting.
 - **Portable backups** — Export and import signed `.yka` backups, or restore an earlier backup to the same verified vault.
-- **Safe file copying** — Copy files into or out of mounted vaults, with optional content verification and recovery of interrupted transfers.
+- **Safe file copying** — Copy files into or out of mounted vaults with optional content verification.
 - **Windows integration** — System tray, saved mount preferences, vault status monitoring, and optional automatic unmount requests.
 
 ## Getting started
@@ -54,7 +54,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1
 ```
 
-The portable application is generated under `dist/portable-1.0.0/`. To build the installer, also install **Inno Setup 6** and run `scripts/installer.ps1`. Install WinFsp before testing mounted vaults; building from source does not install the driver.
+The portable application is generated under `dist/portable-1.0.1/`. To build the installer, also install **Inno Setup 6** and run `scripts/installer.ps1`. Install WinFsp before testing mounted vaults; building from source does not install the driver.
 
 ## Project structure
 

@@ -100,25 +100,39 @@ def style_table(table):
 
 
 class TaskDialog(QDialog):
-    def __init__(self, parent, cancel, *, cancellable=True):
+    def __init__(self, parent, cancel, *, cancellable=True, transfer=False):
         super().__init__(parent); self.setWindowTitle('Vault operation'); self.resize(500, 160); self.setMinimumWidth(500)
         self.cancellable = cancellable
+        self.transfer = transfer
         self.awaiting_restore = False
         if not cancellable: self.setWindowFlag(Qt.WindowCloseButtonHint, False)
         self.setWindowModality(Qt.WindowModal)
         layout = QVBoxLayout(self)
-        self.message = QLabel(); self.message.setWordWrap(True); self.message.setTextFormat(Qt.PlainText); layout.addWidget(self.message)
-        self.bar = QProgressBar(); self.bar.setRange(0, 0); layout.addWidget(self.bar)
-        self.cancel_button = QPushButton('Cancel operation'); layout.addWidget(self.cancel_button)
+        self.message = StatusLabel('', self) if transfer else QLabel()
+        if transfer:
+            self.resize(660, 160); self.setMinimumWidth(600); self.message.elide_mode = Qt.ElideMiddle
+        else: self.message.setWordWrap(True)
+        self.message.setTextFormat(Qt.PlainText); layout.addWidget(self.message)
+        self.bar = QProgressBar(); self.bar.setRange(0, 0)
+        self.cancel_button = QPushButton('Cancel' if transfer else 'Cancel operation')
+        self.summary = StatusLabel('', self); self.summary.setTextFormat(Qt.PlainText); self.summary.setVisible(transfer)
+        if transfer:
+            layout.addWidget(self.summary)
+            row = QHBoxLayout(); row.addWidget(self.bar, 1); row.addWidget(self.cancel_button); layout.addLayout(row)
+        else:
+            layout.addWidget(self.bar); layout.addWidget(self.cancel_button)
         self.cancel_button.setVisible(cancellable)
         def request_cancel():
             self.cancel_button.setEnabled(False)
-            self.message.setText('Cancellation was requested. Please wait while the operation stops safely.')
+            self.message.setText('Cancelling…' if transfer else 'Cancellation was requested. Please wait while the operation stops safely.')
             cancel()
         self.cancel_button.clicked.connect(request_cancel)
 
     def begin(self, title, *, authentication_first=False):
         self.setWindowTitle(title); self.message.setText('Preparing the operation. Please wait…')
+        if self.transfer:
+            self.message.setText('Calculating total size…')
+            self.summary.setText('0 copied · 0 skipped · 0 overwritten · 0.0 MiB/s')
         self.awaiting_restore = authentication_first
         self.bar.setVisible(not authentication_first)
         self.bar.setRange(0, 0)
@@ -147,6 +161,13 @@ class TaskDialog(QDialog):
             percent = re.search(r'\((\d{1,3})%\)', text)
             if percent: self.bar.setRange(0, 100); self.bar.setValue(min(100, int(percent[1])))
             else: self.bar.setRange(0, 0)
+
+    def update_transfer(self, value):
+        if not self.transfer or not self.cancel_button.isEnabled(): return
+        self.message.setText(value['current']); self.summary.setText(value['summary'])
+        percent = value.get('percent')
+        if percent is None: self.bar.setRange(0, 0)
+        else: self.bar.setRange(0, 100); self.bar.setValue(percent)
 
     def reject(self):
         if self.cancellable and self.cancel_button.isEnabled(): self.cancel_button.click()
@@ -193,7 +214,7 @@ class StatusLabel(QLabel):
         self.setText(text)
     def setText(self, text):
         self.message = text; self.setToolTip(text)
-        super().setText(self.fontMetrics().elidedText(text, Qt.ElideRight, max(1, self.width())))
+        super().setText(self.fontMetrics().elidedText(text, getattr(self, 'elide_mode', Qt.ElideRight), max(1, self.width())))
     def resizeEvent(self, event):
         self.setText(self.message); super().resizeEvent(event)
 

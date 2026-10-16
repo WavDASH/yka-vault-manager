@@ -30,6 +30,10 @@ class TransferDialog(Form):
             button = QPushButton(title); button.clicked.connect(handler); row.addWidget(button); self.edit_buttons.append(button)
         self.form.addRow(row)
         self.sources.installEventFilter(self)
+        self.conflict = QComboBox()
+        self.conflict.addItem('Skip existing files', 'skip')
+        self.conflict.addItem('Overwrite existing files', 'overwrite')
+        self.form.addRow('If files already exist', self.conflict)
         self.verify = QCheckBox('Verify copied files'); self.verify.setChecked(True); self.form.addRow(self.verify)
         self.notice = QLabel(); self.notice.setWordWrap(True); self.notice.setTextFormat(Qt.PlainText); self.form.addRow(self.notice)
         self.buttons.button(QDialogButtonBox.Ok).setText('Start Copy')
@@ -45,7 +49,7 @@ class TransferDialog(Form):
     def operation_succeeded(self, action, result):
         # Called only for this dialog's submitted request, after the worker has
         # completed every copy and any requested content verification.
-        if action == 'transfer' and result.get('task_id'): self.sources.clear()
+        if action == 'transfer': self.sources.clear()
     def updated(self, action, result, context):
         if action in ('list', 'status'):
             self.records = result.get('records', []); self.refresh_choices()
@@ -170,6 +174,7 @@ class TransferDialog(Form):
             if self.destination_binding['record_id'] and any(i['binding']['record_id'] == self.destination_binding['record_id'] for i in items):
                 raise ValueError('Choose a different vault or a Windows folder.')
             self.owner.submit(dict(action='transfer', sources=[i['path'] for i in items], destination=self.destination.text(),
-                verify=self.verify.isChecked(), selections=[i['binding'] for i in items]+[self.destination_binding]), origin=self)
+                verify=self.verify.isChecked(), conflict=self.conflict.currentData(),
+                selections=[i['binding'] for i in items]+[self.destination_binding]), origin=self)
         except ValueError as error: self.selection_error(str(error))
 
