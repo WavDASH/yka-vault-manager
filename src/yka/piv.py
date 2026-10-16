@@ -45,18 +45,18 @@ def open_session(serial):
     raise VaultError('YubiKey unavailable. Check the smart-card connection.')
 
 
-def _report(session, serial):
-    pin, puk, mgmt = (session.get_pin_metadata(), session.get_puk_metadata(),
-                      session.get_management_key_metadata())
-    report = {'serial': serial, 'firmware': str(session.version),
-        'pin_default': pin.default_value, 'puk_default': puk.default_value,
-        'management_default': mgmt.default_value,
-        'management_algorithm': mgmt.key_type.name, 'pin_remaining': pin.attempts_remaining,
-        'puk_remaining': puk.attempts_remaining, 'slots': []}
-    from ykman.piv import get_pivman_data
-    try: report['management_pin_protected'] = bool(get_pivman_data(session).has_stored_key)
-    except Exception: report['management_pin_protected'] = None
-    for number in range(0x82, 0x96):
+def _report(session, serial, *, slots=range(0x82, 0x96), credentials=True):
+    report = {'serial': serial, 'firmware': str(session.version), 'slots': []}
+    if credentials:
+        pin, puk, mgmt = (session.get_pin_metadata(), session.get_puk_metadata(),
+                          session.get_management_key_metadata())
+        report.update(pin_default=pin.default_value, puk_default=puk.default_value,
+            management_default=mgmt.default_value, management_algorithm=mgmt.key_type.name,
+            pin_remaining=pin.attempts_remaining, puk_remaining=puk.attempts_remaining)
+        from ykman.piv import get_pivman_data
+        try: report['management_pin_protected'] = bool(get_pivman_data(session).has_stored_key)
+        except Exception: report['management_pin_protected'] = None
+    for number in slots:
         slot = SLOT(number)
         try:
             metadata = session.get_slot_metadata(slot)
@@ -108,9 +108,11 @@ def inspect():
 
 
 def selected_device(serial, slot, *, enroll=False):
+    if int(slot) not in range(0x82, 0x96):
+        raise VaultError('No compatible P-256 key in the selected slot.')
     connection, session = open_session(serial)
     try:
-        report = _report(session, int(serial))
+        report = _report(session, int(serial), slots=(int(slot),), credentials=enroll)
         if enroll and any(report[name] for name in ('pin_default', 'puk_default', 'management_default')):
             raise VaultError('Factory-default credentials detected. Configure the PIV PIN, PUK and management key using Yubico Authenticator before enrollment.')
         for entry in report['slots']:

@@ -63,7 +63,7 @@ def commit(registry, record, current, incoming, verified):
         # If rollback itself fails, keep the journal and both copies for restart.
         if installed: incoming.rename_to(staged)
         if moved: current.rename_to(root)
-        registry.restore_journal(record['id'],None)
+        # Retain the directory IDs until recovery discards the staged copy.
         raise
 
 
@@ -92,4 +92,6 @@ def recover(registry, record):
             else:
                 with VaultGuard(root) as original:
                     if identity(original)!=tx['old_id']:raise VaultError('Original restore folder is missing.')
+            from .residuals import discard_tree
+            discard_tree(staged, tx['new_id'])
             registry.restore_journal(record['id'],None)

@@ -25,10 +25,13 @@ def main():
     print('Keep an independent backup of important data.')
     manager = Manager(print)
     # No command-line, environment, file, or stdin-password option.
-    password = getpass.getpass('Password: ')
+    password = None
     status = 0
     try:
         action = args.pop('action')
+        operation = {'restore': 'import', 'check': 'test-unlock'}.get(action, action)
+        manager.check_operation(dict(args, operation=operation))
+        password = getpass.getpass('Password: ')
         args['passphrase'] = password
         if action == 'restore':
             if input('Restore the keys and password saved in this backup, including older unlock methods? [y/N] ').strip().lower() != 'y':

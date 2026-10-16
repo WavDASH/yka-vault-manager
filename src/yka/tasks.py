@@ -19,6 +19,25 @@ class Tasks:
         if not self.directory.exists():
             try: private_directory(self.directory)
             except FileExistsError: pass
+        self.prune_completed()
+
+    def prune_completed(self):
+        from .move import deletable_reader, delete_handle
+        try:
+            with self.guard():
+                from .residuals import prune_private_partials
+                prune_private_partials(self.directory)
+                for path in self.directory.glob('*.json'):
+                    try:
+                        if path != self.path(path.stem): continue
+                        with deletable_reader(path) as (stream, handle):
+                            raw = stream.read(32 * 1024 * 1024 + 1)
+                            if len(raw) > 32 * 1024 * 1024: continue
+                            task = unique_json(raw)
+                            if task.get('schema') == 1 and task.get('id') == path.stem and task.get('state') == 'Completed':
+                                delete_handle(handle)
+                    except (OSError, ValueError, TypeError, AttributeError, VaultError): continue
+        except (OSError, VaultError): pass
 
     def path(self, ident):
         if str(uuid.UUID(ident)) != ident: raise VaultError('Invalid task identifier.')
@@ -40,9 +59,10 @@ class Tasks:
         with self.guard():
             target = self.path(task['id'])
             temporary = self.directory / (uuid.uuid4().hex + '.partial')
-            with temporary.open('xb') as out:
-                out.write(encoded); out.flush(); os.fsync(out.fileno())
-            os.replace(temporary, target)
+            from .residuals import temporary_output
+            with temporary_output(temporary) as out:
+                out.write(encoded); out.flush(); os.fsync(out.fileno()); out.close()
+                os.replace(temporary, target)
 
     def load(self, ident):
         with self.guard(): return self._load(ident)
@@ -64,6 +84,14 @@ class Tasks:
     def finish(self, task, state, detail=''):
         now = time.time()
         task.update(state=state, detail=detail, updated=now, ended=now); self.save(task)
+        if state == 'Completed':
+            # Operation-specific recovery is durable in Registry. Completed
+            # task journals are not transfer history or recovery authority.
+            try:
+                with self.guard():
+                    from .move import deletable_reader, delete_handle
+                    with deletable_reader(self.path(task['id'])) as (_, handle): delete_handle(handle)
+            except (OSError, VaultError): pass  # Retain the completed journal for a later sweep.
 
     def records(self):
         result = []

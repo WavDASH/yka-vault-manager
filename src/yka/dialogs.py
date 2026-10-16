@@ -3,13 +3,14 @@ import base64
 import copy
 import hashlib
 import json
+import re
 from pathlib import Path
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from .ui_common import ModalDialog
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QDialogButtonBox,
     QLineEdit, QComboBox, QLabel, QPushButton, QFileDialog, QMessageBox, QTabWidget,
     QWidget, QHBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QApplication, QTextEdit, QProgressBar, QCheckBox)
-from .ui_common import MountPicker, style_table, available_drives, style_form, TaskDialog, show_error, show_result
+from .ui_common import MountPicker, style_table, available_drives, style_form, TaskDialog, show_error, show_result, AdjacentHeader
 from .mount_recovery import RECOVERY_STATES, recovery_hint
 
 
@@ -131,6 +132,7 @@ class AddExistingDialog(Form):
         if action != 'registration-info' or context.get('id') != self.request_id or self.request_path != self.root.text().strip(): return
         self.checked_path = self.request_path; self.vault_root = result['root']; self.requires_trust = result['requires_trust']
         self.identity_change = result.get('identity_change')
+        self.unlock_info = {k: result[k] for k in ('key_tags', 'recovery') if k in result}
         self.trust.setText('I recognize this as a different vault.' if self.identity_change else 'I recognize and trust this vault folder.')
         self.show_notice('This location previously contained a different vault. Its identity will be verified before the saved record is updated.' if self.identity_change else 'This folder has no saved trust record or archive proof. Confirm that you trust its source before continuing.' if self.requires_trust else
             '', confirmation=self.requires_trust)
@@ -143,7 +145,7 @@ class AddExistingDialog(Form):
     def submit_folder(self):
         self.update_continue()
         if not self.buttons.button(QDialogButtonBox.Ok).isEnabled(): return
-        credentials = auth(self, 'Verify Existing Vault')
+        credentials = auth(self, 'Verify Existing Vault', record=dict(name=self.name.text().strip(), path=self.vault_root, **self.unlock_info))
         if credentials is not None:
             self.owner.submit(dict(action='register', root=self.vault_root, name=self.name.text().strip(),
                 trust_existing=self.requires_trust and self.trust.isChecked(), identity_change=self.identity_change, **credentials), origin=self, close_on_success=True)
@@ -177,21 +179,36 @@ class MountSettingsDialog(Form):
         super().accept()
 
 
+def next_passkey_name(record):
+    numbers = [0]
+    for label in record.get('devices', {}).values():
+        match = re.fullmatch(r'Passkey\s+([0-9]+)', label.get('name', '').strip(), re.IGNORECASE)
+        if match:
+            numbers.append(int(match[1]))
+    return f'Passkey {max(numbers) + 1}'
+
+
 class AuthDialog(Form):
     def __init__(self, title, devices, parent=None, *, record=None, create=False, only_device=None,
-                 recovery=True, new_key=False, mount=False):
+                 recovery=True, new_key=False, mount=False, exclude_device=None, exclude_tags=(), exclude_devices=(), password_only=False):
         super().__init__(title, parent)
         if record: self.note('Vault: ' + record['name'] + '\n' + record['path'])
         self.selector = QComboBox(); self.form.addRow('Unlock with', self.selector)
         authorized = record.get('authorized_keys', []) if record else None
-        for device in devices:
+        for device in (() if password_only else devices):
             for slot in device.get('slots', []):
                 candidate = dict(serial=device['serial'], slot=slot['slot'], public_key=slot.get('public_key'))
                 if not slot.get('age_compatible_candidate'): continue
+                if exclude_tags and hashlib.sha256(base64.b64decode(candidate['public_key'])).hexdigest() in exclude_tags: continue
+                if exclude_device and all(exclude_device.get(k) == candidate[k] for k in ('serial', 'slot')): continue
+                if any(all(d.get(k) == candidate[k] for k in ('serial', 'slot')) for d in exclude_devices): continue
                 if authorized is not None:
                     known = any(all(d.get(k) == candidate[k] for k in ('serial','slot','public_key')) for d in authorized)
                     tag = hashlib.sha256(base64.b64decode(candidate['public_key'])).hexdigest()
-                    if not known and tag not in record.get('key_tags', []): continue
+                    # A fresh signed header takes precedence over previously
+                    # displayed device details after authorization changes.
+                    authorized_now = tag in record['key_tags'] if 'key_tags' in record else known
+                    if not authorized_now: continue
                 if only_device and any(only_device.get(k) != candidate[k] for k in ('serial', 'slot', 'public_key')): continue
                 self.selector.addItem(f"YubiKey {device['serial']} · PIV {slot['slot']:02X}", candidate)
         if recovery and not new_key and (record is None or record.get('recovery', True)):
@@ -209,15 +226,20 @@ class AuthDialog(Form):
             self.form.addRow('Mount location', self.point)
             self.note('Choose an available drive letter or an empty folder outside the encrypted vault.')
         if not self.selector.count():
-            self.note('No compatible authorized key is connected. Connect the correct YubiKey, or open Tools → Manage PIV Keys to check its configuration.')
+            self.note('This vault does not have a password.' if password_only else 'No compatible authorized key is connected. Connect the correct YubiKey, or open Tools → Manage PIV Keys to check its configuration.')
         self.selector.currentIndexChanged.connect(self.update_fields); self.update_fields()
 
     def update_fields(self):
         hardware = self.selector.currentData() is not None
+        password = self.selector.count() > 0 and not self.new_key and (self.create or not hardware)
         self.pin.setEnabled(hardware)
-        self.password.setEnabled(not self.new_key and (self.create or not hardware))
+        self.form.setRowVisible(self.pin, hardware)
+        self.password.setEnabled(password)
+        self.form.setRowVisible(self.password, password)
+        if self.create: self.form.setRowVisible(self.confirm, password)
         self.form.labelForField(self.password).setText('Password')
         self.buttons.button(QDialogButtonBox.Ok).setEnabled(self.selector.count() > 0)
+        self.layout.activate(); self.resize(self.width(), self.sizeHint().height())
 
     def accept(self):
         if self.selector.currentData() is not None and not self.pin.text():
@@ -267,13 +289,14 @@ class ManageDialog(ModalDialog):
         size_row = QHBoxLayout()
         self.size_value = QLineEdit(); self.size_value.setReadOnly(True); self.size_value.setFrame(False)
         self.size_refresh = QPushButton('Refresh Size')
+        self.size_refresh.setMinimumWidth(self.size_refresh.sizeHint().width() * 2)
         self.size_refresh.clicked.connect(lambda: self.window.refresh_size(self.record_id))
         size_row.addWidget(self.size_value, 1); size_row.addWidget(self.size_refresh)
         form.addRow('Encrypted size', size_row)
         locate = self.locate_button = QPushButton('Locate Moved Vault…'); locate.clicked.connect(self.locate)
         move = self.move_button = QPushButton('Move Vault…'); move.clicked.connect(self.move_vault)
         locate.setEnabled(record.get('state') in ('Unmounted', 'Offline'))
-        locations = QHBoxLayout(); locations.addWidget(move); locations.addWidget(locate); locations.addStretch()
+        locations = QHBoxLayout(); locations.addWidget(move, 1); locations.addWidget(locate, 1)
         form.addRow('Location', locations)
         self.finish_move_button = QPushButton('Finish Move')
         self.finish_move_button.clicked.connect(lambda: self.submit('recover-move'))
@@ -284,25 +307,25 @@ class ManageDialog(ModalDialog):
         self.recover_button.clicked.connect(lambda: self.window.recover_mount(self.record, origin=self))
         form.addRow('Mount recovery', self.recover_button)
         self.recover_hint = QLabel(); self.recover_hint.setWordWrap(True); self.recover_hint.setTextFormat(Qt.PlainText); form.addRow(self.recover_hint)
-        general_layout.addStretch()
         self.delete_button = QPushButton('Delete Vault…')
         self.delete_button.clicked.connect(self.delete_vault)
-        delete_row = QHBoxLayout(); delete_row.addWidget(self.delete_button); delete_row.addStretch()
-        general_layout.addLayout(delete_row)
+        form.addRow('Vault deletion', self.delete_button)
+        general_layout.addStretch()
         self.tabs.addTab(general, 'General')
         security = QWidget(); sl = QVBoxLayout(security)
-        self.keys = QTableWidget(0, 7); self.keys.setHorizontalHeaderLabels(['Name', 'Device / Slot', 'Key ID', 'Connected', 'Authorized', 'PIN / Touch', 'Unlock Test'])
+        self.keys = QTableWidget(0, 5); self.keys.setHorizontalHeaderLabels(['Name', 'Device / Slot', 'Key ID', 'Connected', 'Unlock Test'])
+        self.keys.setHorizontalHeader(AdjacentHeader(self.keys))
         style_table(self.keys)
         self.keys.setSelectionBehavior(QAbstractItemView.SelectRows); self.keys.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.keys.setEditTriggers(QAbstractItemView.NoEditTriggers); self.keys.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        self.keys.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.keys.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.keys.setEditTriggers(QAbstractItemView.NoEditTriggers); self.keys.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        for column, width in enumerate((130, 180, 180, 100, 100)): self.keys.setColumnWidth(column, width)
+        self.keys.horizontalHeader().setStretchLastSection(True)
         sl.addWidget(self.keys)
-        self.test_unlock_button = QPushButton('Test Unlock…'); self.test_unlock_button.clicked.connect(lambda: self.window.vault_operation('test-unlock', self.record, origin=self)); sl.addWidget(self.test_unlock_button)
-        self.keys_hint = QLabel(); self.keys_hint.setWordWrap(True); sl.addWidget(self.keys_hint)
+        self.test_unlock_button = QPushButton('Unlock…')
+        self.test_unlock_button.clicked.connect(self.unlock_or_test_key); sl.addWidget(self.test_unlock_button)
         row = QHBoxLayout(); sl.addLayout(row)
         self.key_buttons = {}
-        for label, handler in [('Add Key…', self.add_key), ('Test Key…', self.test_key), ('Rename…', self.rename_key), ('Remove Authorization…', self.revoke), ('Key Details…', self.key_details)]:
+        for label, handler in [('Add Key…', self.add_key), ('Rename…', self.rename_key), ('Remove Authorization…', self.revoke), ('Key Details…', self.key_details)]:
             button = QPushButton(label); button.clicked.connect(handler); row.addWidget(button); self.key_buttons[label] = button
         self.keys.itemSelectionChanged.connect(self.key_selection_changed)
         self.tabs.addTab(security, 'Authorized Keys')
@@ -311,6 +334,8 @@ class ManageDialog(ModalDialog):
         self.password_buttons = []
         for label, handler in [('Set / change password…', self.set_recovery), ('Remove password…', self.remove_recovery)]:
             b = QPushButton(label); b.clicked.connect(handler); rl.addWidget(b); self.password_buttons.append(b)
+        self.password_test_button = QPushButton('Unlock Test…')
+        self.password_test_button.clicked.connect(self.test_password); rl.addWidget(self.password_test_button)
         rl.addStretch(); self.tabs.addTab(recovery, 'Password')
         backup = QWidget(); bl = QVBoxLayout(backup)
         self.export_button = QPushButton('Export Backup…'); self.export_button.clicked.connect(lambda: self.window.vault_operation('export', self.record, origin=self)); bl.addWidget(self.export_button)
@@ -324,7 +349,10 @@ class ManageDialog(ModalDialog):
         footer = QHBoxLayout(); layout.addLayout(footer)
         self.save_button = QPushButton('Save'); self.save_button.clicked.connect(self.save_preferences)
         self.close_button = QPushButton('Close'); self.close_button.clicked.connect(self.reject)
-        footer.addWidget(self.save_button); footer.addStretch(); footer.addWidget(self.close_button)
+        footer.addStretch(); footer.addWidget(self.save_button); footer.addWidget(self.close_button)
+        # Management actions are explicit choices, not a dialog-wide Enter action.
+        for button in self.findChildren(QPushButton):
+            button.setAutoDefault(False); button.setDefault(False)
         self.name.textChanged.connect(lambda: self.preferences_edited(clear_notice=True))
         self.auto_unmount.toggled.connect(lambda: self.preferences_edited(clear_notice=True))
         self.populate()
@@ -422,18 +450,17 @@ class ManageDialog(ModalDialog):
     def populate(self):
         self.keys.clearSelection(); self.keys.setSortingEnabled(False)
         entries = self.record.get('authorized_keys', []); self.keys.setRowCount(len(entries))
-        available = self.record.get('metadata_available', bool(entries))
-        self.keys_hint.setText('No YubiKeys are authorized for this vault.' if available and not entries else '' if available else 'Use Test Unlock to load the authorization details.')
         for row, key in enumerate(entries):
             label = self.record.get('devices', {}).get(key['public_key'], {})
             connected = next((s for d in self.window.devices if d['serial'] == key['serial'] for s in d['slots'] if s['slot'] == key['slot'] and s.get('public_key') == key['public_key']), None)
-            fingerprint = hashlib.sha256(base64.b64decode(key['public_key'])).hexdigest()
-            values = [label.get('name', 'YubiKey'), f"{key['serial']} / {key['slot']:02X}", fingerprint[:8].upper() + '…' + fingerprint[-4:].upper(),
-                'Yes' if connected else 'No', 'Yes' if self.record['trusted'] else 'Unverified',
-                (connected.get('pin_policy', '?') + ' / ' + connected.get('touch_policy', '?')) if connected else 'Unknown',
-                'Yes (current authorization)' if label.get('tested_generation') == self.record.get('generation') and label.get('tested_generation') is not None else 'Not tested for this update']
+            fingerprint = hashlib.sha256(base64.b64decode(key['public_key'])).hexdigest().upper()
+            values = [label.get('name', 'YubiKey'), f"{key['serial']} / {key['slot']:02X}", fingerprint[:8] + '…' + fingerprint[-4:],
+                'Yes' if connected else 'No',
+                'Yes' if label.get('tested_generation') == self.record.get('generation') and label.get('tested_generation') is not None else 'No']
             for column, value in enumerate(values):
-                item = QTableWidgetItem(value); item.setToolTip(fingerprint if column == 2 else value); item.setData(Qt.UserRole, dict(key)); self.keys.setItem(row, column, item)
+                item = QTableWidgetItem(value); item.setToolTip(fingerprint if column == 2 else value); item.setData(Qt.UserRole, dict(key))
+                if column >= 3: item.setTextAlignment(Qt.AlignCenter)
+                self.keys.setItem(row, column, item)
         self.keys.setSortingEnabled(True); self.key_selection_changed()
 
     def key_details(self):
@@ -461,7 +488,7 @@ class ManageDialog(ModalDialog):
         state = self.record.get('state')
         idle = state in ('Unmounted', 'Verification pending')
         test_ready = ready and not moving and (idle or state == 'mounted')
-        self.test_unlock_button.setEnabled(test_ready)
+        self.password_test_button.setEnabled(test_ready and self.record.get('recovery', False))
         self.export_button.setEnabled(ready and idle and not moving)
         self.restore_button.setEnabled(ready and state == 'Unmounted' and self.record.get('trusted', False) and not moving)
         self.delete_button.setEnabled(ready and state in ('Unmounted', 'Deletion incomplete')
@@ -477,6 +504,9 @@ class ManageDialog(ModalDialog):
             if (self.record.get('move_transaction') or {}).get('committed') else 'The original vault was kept. Recover Move removes the incomplete copy so you can retry.')
         self.move_hint.setVisible(moving)
         connected = bool(key and any(d['serial'] == key['serial'] and any(s['slot'] == key['slot'] and s.get('public_key') == key['public_key'] for s in d['slots']) for d in self.window.devices))
+        metadata_available = self.record.get('metadata_available', bool(self.record.get('authorized_keys')))
+        self.test_unlock_button.setText('Unlock Test…' if metadata_available else 'Unlock…')
+        self.test_unlock_button.setEnabled(test_ready and (not metadata_available or connected))
         password_ready = ready and idle and not moving and self.record.get('trusted', False)
         self.password_buttons[0].setEnabled(password_ready)
         self.password_buttons[1].setEnabled(password_ready and self.record.get('recovery', False) and bool(self.record.get('authorized_keys')))
@@ -484,7 +514,6 @@ class ManageDialog(ModalDialog):
             button.setToolTip('' if idle else 'Unmount this vault to change password settings.')
         for label, button in self.key_buttons.items():
             enabled = ready and (label == 'Add Key…' or bool(key))
-            if label == 'Test Key…': enabled = enabled and test_ready and connected
             if label in ('Add Key…', 'Remove Authorization…'): enabled = enabled and password_ready
             if label == 'Remove Authorization…': enabled = enabled and (len(self.record.get('authorized_keys', [])) > 1 or self.record.get('recovery', False))
             button.setEnabled(enabled)
@@ -503,6 +532,16 @@ class ManageDialog(ModalDialog):
 
     def permission(self, title, **kwargs): return auth(self, title, record=self.record, **kwargs)
 
+    def authorize(self, request, title, *, origin=None, close_on_success=False, notify_success=True, **options):
+        origin = origin or self
+        request = dict(record_id=self.record_id, **request)
+        record = copy.deepcopy(self.record)
+        def checked(info):
+            credentials = auth(origin, title, record=dict(record, **info), **options)
+            if credentials is not None:
+                self.window.submit(dict(request, **credentials), origin=origin, close_on_success=close_on_success, notify_success=notify_success)
+        return self.window.before_auth(request, origin, checked)
+
     def delete_vault(self):
         if not self.delete_button.isEnabled(): return
         record = copy.deepcopy(self.record)
@@ -510,21 +549,23 @@ class ManageDialog(ModalDialog):
         for label, value in [('Vault name', record['name']), ('Encrypted folder', record['path'])]:
             field = dialog.text(label, value); field.setReadOnly(True); field.setCursorPosition(0)
         dialog.note('This will permanently delete this vault’s encrypted folder and its saved records from this computer. This cannot be undone.')
-        confirmed = QCheckBox('I understand that this vault will be permanently deleted.')
+        confirmed = QCheckBox('I understand')
         dialog.form.addRow(confirmed)
         proceed = dialog.buttons.button(QDialogButtonBox.Ok); proceed.setText('Continue'); proceed.setEnabled(False)
         confirmed.toggled.connect(proceed.setEnabled)
         if dialog.exec() != QDialog.Accepted: return
-        credentials = {}
-        if (record.get('delete_transaction') or {}).get('phase') != 'finalizing':
+        request = dict(action='delete-vault', record_id=record['id'], confirmed=True,
+            expected_path=record['path'], expected_uuid=record['uuid'], expected_public=record['signing_public'])
+        if (record.get('delete_transaction') or {}).get('phase') == 'finalizing':
+            self.window.submit(request, origin=self, close_on_success=True); return
+        def checked(info):
             authorization = AuthDialog('Authorize Deletion', self.window.devices, self, record=record)
             authorization.note('Unlock this vault to confirm deletion.')
             authorization.buttons.button(QDialogButtonBox.Ok).setText('Delete Vault')
             if authorization.exec() != QDialog.Accepted: return
             credentials = authorization.values()
-        self.window.submit(dict(action='delete-vault', record_id=record['id'], confirmed=True,
-            expected_path=record['path'], expected_uuid=record['uuid'], expected_public=record['signing_public'],
-            **credentials), origin=self, close_on_success=True)
+            self.window.submit(dict(request, **credentials), origin=self, close_on_success=True)
+        self.window.before_auth(request, self, checked)
 
     def reject(self):
         if self.can_close(): super().reject()
@@ -550,50 +591,57 @@ class ManageDialog(ModalDialog):
             path, _ = QFileDialog.getOpenFileName(dialog, 'Select Vault Key File at New Location', '', 'Vault key (.yka-key);;All files (*)')
             if path: field.setText(path)
         browse.clicked.connect(choose)
-        ok = dialog.buttons.button(QDialogButtonBox.Ok); ok.setText('Verify and Update'); ok.setEnabled(False)
+        ok = dialog.buttons.button(QDialogButtonBox.Ok); ok.setText('Update'); ok.setEnabled(False)
         field.textChanged.connect(lambda text: ok.setEnabled(bool(text.strip()) and not dialog.busy))
         def submit():
             path = field.text().strip()
             if not path: return
             if Path(path).name.casefold() != '.yka-key':
                 show_error(dialog, 'relocate', 'Select the .yka-key file inside your encrypted vault folder.'); return
-            credentials = auth(dialog, 'Verify Moved Vault', record=self.record)
-            if credentials is not None:
-                self.window.submit(dict(action='relocate', record_id=self.record_id, new_path=str(Path(path).parent), **credentials),
-                    origin=dialog, close_on_success=True)
+            self.authorize(dict(action='relocate', new_path=str(Path(path).parent)), 'Verify Moved Vault', origin=dialog, close_on_success=True)
         dialog.submit_handler = submit; dialog.adjustSize(); dialog.exec()
 
     def move_vault(self):
         dialog = Form('Move Vault', self)
         dialog.note('Vault: ' + self.record['name'] + '\n' + self.record['path'])
         destination = dialog.folder('New vault folder', new=True, leaf=Path(self.record['path']).name)
-        dialog.buttons.button(QDialogButtonBox.Ok).setText('Verify and Move')
+        dialog.buttons.button(QDialogButtonBox.Ok).setText('Move')
         def submit():
             if not destination.text().strip(): return
-            credentials = auth(dialog, 'Authorize Vault Move', record=self.record)
-            if credentials is not None:
-                self.window.submit(dict(action='move-vault', record_id=self.record_id, destination=destination.text().strip(), **credentials), origin=dialog, close_on_success=True)
+            self.authorize(dict(action='move-vault', destination=destination.text().strip()), 'Authorize Vault Move', origin=dialog, close_on_success=True)
         dialog.submit_handler = submit; dialog.adjustSize(); dialog.exec()
 
     def add_key(self):
-        dialog = Form('Add Key — Use Existing PIV Key', self); name = dialog.text('Device name', 'Backup YubiKey')
-        dialog.note('Authorize an existing PIV key for this vault, then test that it can unlock independently.')
+        dialog = Form('Add Key — Use Existing PIV Key', self); name = dialog.text('Device name', next_passkey_name(self.record))
         def submit():
-            credentials = auth(dialog, 'Authorize Key Change', record=self.record)
-            if credentials is None: return
-            new = auth(dialog, 'Select Existing PIV Key', recovery=False, new_key=True)
-            if new is None: credentials.clear(); return
-            request = dict(action='add-device', record_id=self.record_id, **credentials,
-                new_serial=new['serial'], new_slot=new['slot'], new_pin=new['pin'], device_name=name.text())
-            credentials.clear(); new.clear()
-            self.window.submit(request, origin=dialog, close_on_success=True)
+            request = dict(action='add-device', record_id=self.record_id, device_name=name.text())
+            def checked(info):
+                new = auth(dialog, 'Select Existing PIV Key', recovery=False, new_key=True,
+                    exclude_tags=info.get('key_tags', ()), exclude_devices=info.get('exclude_devices', ()))
+                if new is None: return
+                credentials = auth(dialog, 'Authorize Key Change', record=dict(self.record, **info))
+                if credentials is None: new.clear(); return
+                self.window.submit(dict(request, **credentials, new_serial=new['serial'], new_slot=new['slot'], new_pin=new['pin']),
+                    origin=dialog, close_on_success=True)
+                credentials.clear(); new.clear()
+            self.window.before_auth(request, dialog, checked)
         dialog.submit_handler = submit; dialog.exec()
+
+    def unlock_or_test_key(self):
+        if not self.test_unlock_button.isEnabled(): return
+        if self.record.get('metadata_available', bool(self.record.get('authorized_keys'))):
+            self.test_key()
+        else:
+            self.authorize(dict(action='test-unlock'), 'Unlock Vault', notify_success=False)
+
+    def test_password(self):
+        if self.password_test_button.isEnabled():
+            self.authorize(dict(action='test-unlock'), 'Test Password', password_only=True)
 
     def test_key(self):
         key = self.selected_key()
         if not key: return
-        credentials = self.permission('Independent key test', only_device=key, recovery=False)
-        if credentials is not None: self.submit('test-unlock', **credentials)
+        self.authorize(dict(action='test-unlock'), 'Independent key test', only_device=key, recovery=False)
 
     def rename_key(self):
         key = self.selected_key()
@@ -607,16 +655,18 @@ class ManageDialog(ModalDialog):
         if not key: return
         if len(self.record.get('authorized_keys', [])) == 1 and not self.record.get('recovery'):
             QMessageBox.warning(self, 'Unlock method required', 'This is the last unlock method. Add and successfully test another key or password before removing it.'); return
-        if QMessageBox.warning(self, 'Revoke key', 'Remove this key’s authorization for the current vault? The private key stays on the YubiKey and can still unlock older backups. Authorize this change with a different unlock method.', QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes: return
-        credentials = self.permission('Use a surviving unlock method')
-        if credentials is not None: self.submit('remove-device', remove_serial=key['serial'], remove_slot=key['slot'], **credentials)
+        if QMessageBox.warning(self, 'Revoke key', 'Remove this key’s authorization for the current vault?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes: return
+        self.authorize(dict(action='remove-device', remove_serial=key['serial'], remove_slot=key['slot']),
+            'Use a surviving unlock method', exclude_device=key)
 
     def set_recovery(self):
         if not self.password_buttons[0].isEnabled(): return
+        self.window.before_auth(dict(action='set-recovery', record_id=self.record_id), self, lambda _: self._set_recovery())
+
+    def _set_recovery(self):
         dialog = Form('Password', self)
         current = dialog.text('Current password', secret=True) if self.record.get('recovery') else None
         password = dialog.text('New password', secret=True); confirm = dialog.text('Confirm password', secret=True)
-        dialog.note('Old passwords still unlock old backups.')
         def submit():
             if len(password.text()) < 8 or password.text() != confirm.text():
                 QMessageBox.warning(dialog, 'Check Password', 'Enter at least 8 characters and make sure both passwords match.'); return
@@ -636,15 +686,13 @@ class ManageDialog(ModalDialog):
         if not self.password_buttons[1].isEnabled(): return
         if not self.record.get('authorized_keys'):
             QMessageBox.warning(self, 'Unlock method required', 'Add and test a YubiKey first.'); return
-        if QMessageBox.question(self, 'Remove password', 'A tested YubiKey must remain. Remove this password?') != QMessageBox.Yes: return
-        credentials = self.permission('Verify surviving YubiKey', recovery=False)
-        if credentials is not None: self.submit('remove-recovery', **credentials)
+        if QMessageBox.question(self, 'Remove password', 'Remove password authentication for this vault?') != QMessageBox.Yes: return
+        self.authorize(dict(action='remove-recovery'), 'Verify surviving YubiKey', recovery=False)
 
 
 class KeyDetails(Form):
     def __init__(self, key, parent=None):
         super().__init__('Advanced Key Details', parent)
-        self.note("The fingerprint identifies a public key.")
         values = {k: v for k, v in key.items() if k not in ('certificate', 'envelope')}
         if key.get('public_key'): values['fingerprint'] = hashlib.sha256(base64.b64decode(key['public_key'])).hexdigest()
         text = QTextEdit(); text.setReadOnly(True); text.setPlainText(json.dumps(values, indent=2)); self.form.addRow(text)
@@ -696,10 +744,9 @@ class NewKeyDialog(Form):
             text = QTextEdit(); text.setReadOnly(True); text.setMaximumHeight(100)
             text.setPlainText('Known registered vaults using this key:\n' + ('\n'.join(dependencies) or 'No dependencies were found in the current list.'))
             self.form.addRow(text)
-            self.note("This list is a local snapshot. Offline or unverified vaults, historical backups, other computers and other applications cannot be fully checked. Add and test another unlock method before replacing this key.")
-            self.typed = self.text('Type to confirm')
-            self.confirm_text = f"REPLACE {device['serial']} {slot['slot']:02X}"
-            self.note('For final confirmation, type: ' + self.confirm_text)
+            self.confirm_text = 'CONFIRM REPLACEMENT'
+            self.note(f'Type "{self.confirm_text}" to confirm replacement.')
+            self.typed = QLineEdit(); self.form.addRow(self.typed)
         else: self.note("Create a P-256 private key in this confirmed empty slot.")
         self.note('You can change your PIV PIN, PUK, and management key using Yubico Authenticator.')
         self.pin = self.text('PIV PIN', secret=True)
@@ -709,11 +756,9 @@ class NewKeyDialog(Form):
         self.management = self.text('Management key (hex)', secret=True)
         self.management.setToolTip('This device-wide credential authorizes key creation and replacement. It is not your PIN.')
         self.mode.currentIndexChanged.connect(self.management_mode); self.management_mode()
-        self.note("Protect with PIN reads the management key stored securely on the device after PIN verification.")
-        self.note('The new key requires PIN Always and Touch Always. An interruption may leave a new key without a certificate. Do not unplug the device while this operation runs.')
         self.status = QLabel(); self.status.setWordWrap(True); self.form.addRow(self.status)
         self.bar = QProgressBar(); self.bar.setRange(0, 0); self.bar.hide(); self.form.addRow(self.bar)
-        self.buttons.button(QDialogButtonBox.Ok).setText('Review and Replace' if replacing else 'Review and Create')
+        self.buttons.button(QDialogButtonBox.Ok).setText('Replace' if replacing else 'Review and Create')
 
     def management_mode(self):
         manual = self.mode.currentIndex() == 1
@@ -724,7 +769,7 @@ class NewKeyDialog(Form):
         if self.task: return
         if not self.pin.text(): self.status.setText('Please enter your PIV PIN.'); return
         if self.replacing and self.typed.text() != self.confirm_text:
-            self.status.setText('Type the exact device and slot confirmation shown above.'); return
+            self.status.setText(f'Enter "{self.confirm_text}" to continue.'); return
         try: key = bytes.fromhex(self.management.text().strip()) if self.mode.currentIndex() else b''
         except ValueError: self.status.setText('Enter the management key as hexadecimal characters.'); return
         if self.mode.currentIndex() and len(key) not in (16, 24, 32):
@@ -767,10 +812,10 @@ class NewKeyDialog(Form):
             parent.pending_slot = (result['serial'], result['slot'])
             parent.notice.setText(f"The new key in slot {result['slot']:02X} was verified. Refreshing the device list…")
             QDialog.accept(self)
-            show_result(parent, 'piv-replace' if self.replacing else 'piv-create', 'The PIV key was created and successfully verified.')
+            show_result(parent, 'piv-replace' if self.replacing else 'piv-create', 'Key created and tested.')
         else:
             self.status.setText(error)
-            self.buttons.button(QDialogButtonBox.Ok).setText('Review and Retry')
+            self.buttons.button(QDialogButtonBox.Ok).setText('Replace' if self.replacing else 'Review and Retry')
             show_error(self, 'piv-replace' if self.replacing else 'piv-create', error)
 
     def finished_key(self, result, error):
@@ -794,8 +839,9 @@ class DeviceDialog(ModalDialog):
         self.notice = QLabel(); self.notice.setWordWrap(True); layout.addWidget(self.notice)
         info = QLabel('You can change your PIV PIN, PUK, and management key using Yubico Authenticator.'); info.setWordWrap(True); layout.addWidget(info)
         self.table = QTableWidget(0, 5); self.table.setHorizontalHeaderLabels(['Slot', 'Status', 'Key ID', 'PIN / Touch', 'Origin'])
-        style_table(self.table); self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setStretchLastSection(True); layout.addWidget(self.table)
+        style_table(self.table); self.table.setHorizontalHeader(AdjacentHeader(self.table))
+        for column, width in enumerate((65, 170, 180, 150, 170)): self.table.setColumnWidth(column, width)
+        layout.addWidget(self.table)
         self.guidance = QLabel(); self.guidance.setWordWrap(True); layout.addWidget(self.guidance)
         row = QHBoxLayout(); layout.addLayout(row)
         self.create = QPushButton('Create New Key…'); self.create.clicked.connect(self.create_key); row.addWidget(self.create)

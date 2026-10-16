@@ -8,6 +8,7 @@ import tempfile
 import threading
 import uuid
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 from . import archive, piv
@@ -31,6 +32,7 @@ class Manager:
         self.security_mutex = threading.RLock()
         self.registry = Registry()
         self.session_mutex = threading.RLock()
+        self.session_operations = {}
         from .tasks import Tasks
         self.jobs = Tasks(self.registry.directory)
         self.task_context = threading.local()
@@ -59,12 +61,19 @@ class Manager:
         return dict(expected_uuid=record['uuid'], expected_public=record['signing_public']) if record else {}
 
     def _verified(self, root, args, guard):
+        from .precheck import public_vault
+        body = public_vault(self, root)
+        self._check_provenance(root, args, body)
         result = native_call(dict(action='verify', root=str(root), **self._auth(args), **self._expected(root)),
             guard=guard, pin=args.get('pin'), progress=self.progress, cancel=self.cancel.is_set)
         return self._check_verified(root, args, result)
 
     def _check_verified(self, root, args, result):
         self.registry.check_generation(result, root)
+        self._check_provenance(root, args, result)
+        return result
+
+    def _check_provenance(self, root, args, result):
         origin = self.registry.origin(root)
         if origin is None and not (root / '.import-proof.json').exists():
             pending_copy = self.registry.transaction(lambda data: (any(
@@ -87,6 +96,22 @@ class Manager:
         self.metadata_cache[path_key(root)] = dict(verification)
         proof = root / '.import-proof.json'
         if proof.exists(): os.replace(proof, root / '.verified-import-proof.json')
+        if (root / '.verified-import-proof.json').exists():
+            # Registry is committed and the original archive proof has been
+            # authenticated. Retire the manifest before its completion marker.
+            try:
+                from .move import deletable_reader, delete_handle
+                from .storage import MAX_KEY, parse_header
+                with guarded_reader(root / '.yka-key') as source:
+                    header = parse_header(source.read(MAX_KEY + 1))
+                    if any(header[key] != verification[key] for key in ('uuid', 'signing_public', 'keyring_sha256')):
+                        raise VaultError('The verified keyring changed before cleanup.')
+                    for name in ('.import-manifest.jsonl', '.verified-import-proof.json'):
+                        path = root / name
+                        if path.exists():
+                            with deletable_reader(path) as (_, handle): delete_handle(handle)
+            except (OSError, VaultError):
+                self.progress('The vault was verified, but its temporary verification files could not be removed. They will be checked again next time.')
         return record
 
     def _auth(self, args, *, enroll=False):
@@ -117,9 +142,10 @@ class Manager:
     def _write_state(self, root, state):
         target = safe_path(root / '.mount-state.json')
         partial = root / ('.mount-state-' + uuid.uuid4().hex + '.partial')
-        with partial.open('xb') as output:
-            output.write(archive.canonical(state)); output.flush(); os.fsync(output.fileno())
-        os.replace(partial, target)
+        from .residuals import temporary_output
+        with temporary_output(partial) as output:
+            output.write(archive.canonical(state)); output.flush(); os.fsync(output.fileno()); output.close()
+            os.replace(partial, target)
 
     def _restore_mount_folder(self, root):
         record = self.registry.by_path(root) or {}
@@ -141,31 +167,58 @@ class Manager:
         if type(args.get('auto_unmount', False)) is not bool: raise VaultError('Invalid automatic unmount setting.')
         if args.get('passphrase') and len(args['passphrase']) < 8:
             raise VaultError('Password must contain at least 8 characters.')
-        root = safe_path(args['root'])
-        if root.exists(): raise VaultError('Vault folder already exists. Choose a new folder.')
-        if self.registry.by_path(root): raise VaultError('This folder is reserved by a saved vault. Locate or remove that record first.')
+        from .precheck import new_folder
+        root = new_folder(self, args['root'])
+        if args.get('mode', 'lite') not in ('lite', 'full'): raise VaultError('Select Lite or Full.')
         auth = {}
         if args.get('serial') and args.get('slot'):
             auth['device'] = piv.selected_device(args['serial'], args['slot'], enroll=True)
         if args.get('passphrase'): auth['passphrase'] = args['passphrase']
         if not auth: raise VaultError('Add a YubiKey or a password.')
         private_directory(root)
-        with VaultGuard(root) as guard:
-            result = native_call(dict(action='create', root=str(root), mode=args.get('mode', 'lite'), **auth),
-                guard=guard, pin=args.get('pin'), progress=self.progress, cancel=self.cancel.is_set)
-            # Recovery verification is an actual decrypt + config/identity check, not a flag selected in UI.
-            if auth.get('passphrase'):
-                self.progress('The vault files are ready. Testing password access…')
-                verified = native_call(dict(action='verify', root=str(root), passphrase=auth['passphrase']), guard=guard,
-                    progress=self.progress, cancel=self.cancel.is_set)
-            if auth.get('device'):
-                self.progress('The vault files are ready. Testing YubiKey unlock access; follow the next PIN or touch prompt.')
-                verified = native_call(dict(action='verify', root=str(root), device=auth['device']), guard=guard,
-                    pin=args.get('pin'), progress=self.progress, cancel=self.cancel.is_set)
+        created_identity = None
+        try:
+            with VaultGuard(root) as guard:
+                created_identity = list(guard.root_identity)
+                result = native_call(dict(action='create', root=str(root), mode=args.get('mode', 'lite'), **auth),
+                    guard=guard, pin=args.get('pin'), progress=self.progress, cancel=self.cancel.is_set)
+                # Recovery verification is an actual decrypt + config/identity check, not a flag selected in UI.
+                if auth.get('passphrase'):
+                    self.progress('The vault files are ready. Testing password access…')
+                    verified = native_call(dict(action='verify', root=str(root), passphrase=auth['passphrase']), guard=guard,
+                        progress=self.progress, cancel=self.cancel.is_set)
+                if auth.get('device'):
+                    self.progress('The vault files are ready. Testing YubiKey unlock access; follow the next PIN or touch prompt.')
+                    verified = native_call(dict(action='verify', root=str(root), device=auth['device']), guard=guard,
+                        pin=args.get('pin'), progress=self.progress, cancel=self.cancel.is_set)
+        except BaseException:
+            if created_identity is not None:
+                try:
+                    from .residuals import discard_empty_vault
+                    discard_empty_vault(root, created_identity)
+                except (OSError, VaultError): pass
+            raise
         record = self._accept(root, verified, name=args.get('name'), auto_unmount=args.get('auto_unmount', False))
         return dict(result, path=str(root), record=record, experimental=True)
 
+    @contextmanager
+    def _session_operation(self, root):
+        """Serialize one vault's lifecycle without holding up unrelated mounts."""
+        key = path_key(root)
+        with self.session_mutex:
+            entry = self.session_operations.setdefault(key, [threading.RLock(), 0])
+            entry[1] += 1
+        try:
+            with entry[0]: yield
+        finally:
+            with self.session_mutex:
+                entry[1] -= 1
+                if not entry[1]: del self.session_operations[key]
+
     def mount(self, args):
+        with self._session_operation(args['root']): return self._mount(args)
+
+    def _mount(self, args):
         if self.security_pending.is_set(): raise VaultError('Security event pending. Mounting is blocked.')
         root = safe_path(args['root'], must_exist=True)
         root = Path(path_key(root))
@@ -184,7 +237,13 @@ class Manager:
                 # Keep the selected location's parent chain stable while WinFsp
                 # replaces an empty directory with its mount junction.
                 guard.pins.extend(pin_directory(parent) for parent in reversed(Path(point).parents))
-            identity = self._body(root)
+            from .precheck import public_vault
+            identity = public_vault(self, root)
+            self._check_provenance(root, args, identity)
+            for saved in self.registry.records():
+                if saved['uuid'] == identity['uuid'] and saved.get('last_mount'):
+                    if mount_state(BACKEND, saved['last_mount']['mount_point']):
+                        raise VaultError('Another copy of this vault identity may still be mounted.')
             try:
                 guard.reserve(self.registry.locks, 'identity:' + identity['uuid'])
                 guard.reserve(self.registry.locks, 'mount:' + path_key(point))
@@ -231,7 +290,9 @@ class Manager:
             if self.security_pending.is_set():
                 self.unmount({'root': str(root)})
                 raise VaultError('Security event received. Mount closed.')
-            return dict(result, mount_point=point, path=str(root))
+            from .keyring_cleanup import cleanup
+            pending = cleanup(root, verification, guard)
+            return dict(result, mount_point=point, path=str(root), keyring_cleanup_pending=pending)
         except BaseException:
             if session:
                 try: self.progress('Stopping the mount attempt and checking for remaining mounts…')
@@ -262,7 +323,7 @@ class Manager:
             raise
 
     def unmount(self, args):
-        with self.session_mutex: return self._unmount(args)
+        with self._session_operation(args['root']): return self._unmount(args)
 
     def recover_unmount(self, args):
         """Explicit recovery only with a pinned identity and exact NT device match."""
@@ -273,8 +334,8 @@ class Manager:
         if not record or not record.get('trusted'): raise VaultError('The vault has no trusted local identity. Inspect the mount manually.')
         body = self._body(root)
         if (body['uuid'], body['signing_public']) != (record['uuid'], record['signing_public']): raise VaultError('Vault identity changed. Recovery stopped.')
-        with self.session_mutex:
-            local = self.sessions.get(key)
+        with self._session_operation(root):
+            with self.session_mutex: local = self.sessions.get(key)
             saved = record.get('last_mount')
             if not saved: return self._unmount(args)
             point = saved['mount_point']
@@ -317,21 +378,26 @@ class Manager:
                 self._restore_mount_folder(root)
                 safe_path(root / '.mount-state.json').unlink(missing_ok=True)
                 self.registry.update(record['id'], {'last_mount': None})
-                if local: local[1].close(); local[1].reap_output(); local[0].close(); del self.sessions[key]
+                if local:
+                    local[1].close(); local[1].reap_output()
+                    with self.session_mutex:
+                        local[0].close(); del self.sessions[key]
                 return dict(path=str(root), state='confirmed-unmounted', mounted=False)
 
     def _unmount(self, args):
         key = path_key(args['root'])
         root = Path(key)
-        if key not in self.sessions:
+        with self.session_mutex: owned = self.sessions.get(key)
+        if owned is None:
             root = safe_path(root, must_exist=True)
             with VaultGuard(root):
                 self._idle(root)
                 self._restore_mount_folder(root)
                 saved = self.registry.by_path(root)
                 if saved: self.registry.update(saved['id'], {'last_mount': None})
-            return {'path': key, 'mounted': False, 'remaining_managed': len(self.sessions), 'state': 'confirmed-unmounted'}
-        guard, session, point = self.sessions[key]
+            with self.session_mutex: remaining = len(self.sessions)
+            return {'path': key, 'mounted': False, 'remaining_managed': remaining, 'state': 'confirmed-unmounted'}
+        guard, session, point = owned
         live = mount_state(BACKEND, point)
         if not live or session.process.stdin.closed:
             session.close()
@@ -349,7 +415,8 @@ class Manager:
             saved = self.registry.by_path(root)
             if saved: self.registry.update(saved['id'], {'last_mount': None})
             session.reap_output()
-            guard.close(); del self.sessions[key]
+            with self.session_mutex:
+                guard.close(); del self.sessions[key]
             return {'path': key, 'mounted': False, 'state': 'confirmed-unmounted'}
         try:
             session.send({'action': 'unmount'})
@@ -373,14 +440,24 @@ class Manager:
         saved = self.registry.by_path(root)
         if saved: self.registry.update(saved['id'], {'last_mount': None})
         session.reap_output()
-        guard.close(); del self.sessions[key]
-        return {'path': key, 'mounted': False, 'remaining_managed': len(self.sessions), 'state': 'confirmed-unmounted'}
+        with self.session_mutex:
+            guard.close(); del self.sessions[key]; remaining = len(self.sessions)
+        return {'path': key, 'mounted': False, 'remaining_managed': remaining, 'state': 'confirmed-unmounted'}
 
     def status(self, args):
         statuses = []
+        observations = {}
+        def probe(point):
+            key = path_key(point)
+            if key not in observations:
+                try: observations[key] = mount_state(BACKEND, point)
+                except Exception as error: observations[key] = error
+            result = observations[key]
+            if isinstance(result, Exception): raise result
+            return result
         with self.session_mutex: sessions = list(self.sessions.items())
         for root, (_, session, point) in sessions:
-            try: live = mount_state(BACKEND, point)
+            try: live = probe(point)
             except Exception: live = None
             if session.process.poll() is not None and live:
                 state = 'mounted-supervisor-lost'
@@ -390,11 +467,14 @@ class Manager:
                     if getattr(session, 'mount_device', None) != mount_device(point): state = 'unknown-mount-owner'
                 except Exception: state = 'unknown-mount-owner'
             statuses.append({'path': root, 'mount_point': point, 'mounted': live, 'state': state})
-        return {'volumes': statuses, 'records': self.list_vaults({}, statuses)['records'], 'experimental': True,
+        return {'volumes': statuses, 'records': self.list_vaults({}, statuses, probe=probe)['records'], 'experimental': True,
                 'security_pending': self.security_pending.is_set()}
 
     @contextmanager
     def _prepared(self, request, args, guard):
+        from .precheck import public_vault
+        body = public_vault(self, Path(request['root']))
+        self._check_provenance(Path(request['root']), args, body)
         session = NativeSession(dict(request, prepare=True), guard, args.get('pin'), self.progress)
         try:
             verified = session.receive(cancel=self.cancel.is_set)
@@ -410,17 +490,18 @@ class Manager:
         self.progress('Checking the vault before export…')
         with VaultGuard(root) as guard, guarded_reader(root / '.yka-key'):
             self._idle(root)
+            output = args.get('output')
+            if not output and self.destination: output = self.destination()
+            if not output: raise VaultError('Export was cancelled. No archive was created.')
+            from .precheck import export_target
+            export_target(root, output)
+            replace_existing = None
+            if isinstance(output, dict):
+                replace_existing = output.get('replace_existing'); output = output['path']
+            self.note_output(output)
             request = dict(action='sign', root=str(root), **self._auth(args), **self._expected(root))
             with self._prepared(request, args, guard) as (session, verified):
                 self._accept(root, verified)
-                self.progress('Authentication succeeded. Choose where to save the archive.')
-                output = args.get('output')
-                if not output and self.destination: output = self.destination()
-                if not output: raise VaultError('Export was cancelled. No archive was created.')
-                replace_existing = None
-                if isinstance(output, dict):
-                    replace_existing = output.get('replace_existing'); output = output['path']
-                self.note_output(output)
                 archive.check_cancel(self.cancel.is_set)
                 def sign(digest):
                     session.send({'action': 'continue', 'message': base64.b64encode(digest).decode()})
@@ -430,10 +511,11 @@ class Manager:
                         progress=self.progress, cancel=self.cancel.is_set, replace_existing=replace_existing, on_residual=self.note_residual)
 
     def import_(self, args):
-        auth = self._auth(args)
+        from .precheck import new_folder
+        new_folder(self, args['destination'])
         verified_info = {}
         def verify(metadata):
-            result = native_call(dict(action='archive-verify', **metadata, **auth),
+            result = native_call(dict(action='archive-verify', **metadata, **self._auth(args)),
                 pin=args.get('pin'), progress=self.progress, cancel=self.cancel.is_set)
             if args.get('accept_backup_authorization') is not True: self.registry.check_generation(result)
             verified_info.update(result); return result
@@ -452,15 +534,14 @@ class Manager:
         record = self.registry.get(args['record_id'])
         if not record.get('trusted'): raise VaultError('Authenticate this vault before restoring a backup.')
         root = safe_path(record['path'], must_exist=True)
-        with VaultGuard(root):
+        with VaultGuard(root) as guard:
             self._idle(root, cleanup=False)
             current = self._body(root)
             if (current['uuid'], current['signing_public']) != (record['uuid'], record['signing_public']):
                 raise VaultError('The current folder does not match its saved vault identity.')
+            guard.reserve(self.registry.locks, 'identity:' + record['uuid'])
             with guarded_reader(safe_path(args['archive'], must_exist=True)) as stream:
-                archive.preflight(args['archive'], stream=stream)
-                metadata = archive.authentication_metadata(stream, self.cancel.is_set)
-                body = archive.check_restore_identity(metadata, record)
+                _, body = archive.public_precheck(stream, destination=root, expected=record, cancel=self.cancel.is_set)
                 archive.check_cancel(self.cancel.is_set)
         return {k: body[k] for k in ('key_tags', 'recovery')}
 
@@ -502,10 +583,12 @@ class Manager:
                     session.close_job()
                     verified.clear(); verified.update(result)
                     os.replace(stage / '.import-proof.json', stage / '.verified-import-proof.json')
+            incoming_identity = None
             try:
                 archive.import_archive(args['archive'], destination, authenticate, authenticated=True,
                     cancel=self.cancel.is_set, progress=self.progress, before_publish=prepare_commit, on_residual=self.note_residual, authenticate_first=True)
                 with VaultGuard(destination) as incoming:
+                    incoming_identity = list(incoming.root_identity)
                     archive.check_cancel(self.cancel.is_set)
                     self._idle(root)
                     if not guard.same_root(): raise VaultError('The current vault folder changed during restore.')
@@ -517,6 +600,21 @@ class Manager:
                     self.metadata_cache[path_key(root)] = dict(verified)
                 # Cleanup runs after the old and new directory pins are released.
                 outcome = dict(record=restored, path=str(root), generation=verified['generation'])
+            except BaseException:
+                # After a confirmed rollback, discard the exact incoming copy
+                # before forgetting its journal. Otherwise preserve recovery.
+                tx = self.registry.get(record['id']).get('restore_transaction')
+                rolled_back = bool(tx and not tx.get('committed') and guard.root == root
+                    and list(guard.root_identity) == tx['old_id'] and guard.same_root()
+                    and str(destination) == tx['staged'] and not Path(tx['old']).exists())
+                if incoming_identity is not None and (not tx or rolled_back):
+                    try:
+                        from .residuals import discard_tree
+                        discard_tree(destination, incoming_identity)
+                        if rolled_back: self.registry.restore_journal(record['id'], None)
+                    except (OSError, VaultError):
+                        self.progress('The restore stopped. Its temporary folder could not be removed: ' + str(destination))
+                raise
             finally:
                 if session:
                     session.finish_crypto()
@@ -531,24 +629,14 @@ class Manager:
 
     def restore_keyring(self, args):
         root = safe_path(args['root'], must_exist=True)
-        source = safe_path(args['backup'], must_exist=True)
-        if source.stat().st_size > archive.MAX_METADATA: raise VaultError('Backup exceeds size limit.')
         with VaultGuard(root) as guard:
             self._idle(root)
+            from .precheck import keyring_restore
+            raw, config_name, configuration = keyring_restore(self, args)
             target = safe_path(root / '.yka-key')
-            if target.exists(): raise VaultError('This vault already contains a Keyring. Restore is only available when it is missing; the existing Keyring will not be overwritten.')
-            with guarded_reader(source) as stream: raw = stream.read(archive.MAX_METADATA + 1)
-            if len(raw) > archive.MAX_METADATA: raise VaultError('Keyring exceeds size limit.')
-            from .storage import parse_header
-            parse_header(raw)
             with tempfile.TemporaryDirectory(prefix='yka-keyring-') as scratch:
                 probe = Path(scratch)
-                config = next((root / n for n in ('.config.pb', '.securefs.json') if (root / n).is_file()), None)
-                if config is None: raise VaultError('SecureFS configuration missing.')
-                with guarded_reader(config) as stream, (probe / config.name).open('xb') as output:
-                    configuration = stream.read(archive.MAX_METADATA + 1)
-                    if len(configuration) > archive.MAX_METADATA: raise VaultError('Configuration exceeds size limit.')
-                    output.write(configuration)
+                (probe / config_name).write_bytes(configuration)
                 (probe / '.yka-key').write_bytes(raw)
                 result = native_call(dict(action='verify', root=str(probe), **self._auth(args), **self._expected(root)),
                     pin=args.get('pin'), progress=self.progress, cancel=self.cancel.is_set)
@@ -556,11 +644,14 @@ class Manager:
             target.parent.mkdir(exist_ok=True)
             guard.pins.append(pin_directory(target.parent))
             partial = target.with_name('.yka-key-' + uuid.uuid4().hex + '.partial')
-            with partial.open('xb') as output: output.write(raw); output.flush(); os.fsync(output.fileno())
-            os.rename(partial, target)
+            from .residuals import temporary_output
+            with temporary_output(partial) as output:
+                output.write(raw); output.flush(); os.fsync(output.fileno()); output.close()
+                os.rename(partial, target)
         return dict(result, restored=True, path=str(root))
 
-    def list_vaults(self, args, statuses=None):
+    def list_vaults(self, args, statuses=None, *, probe=None):
+        probe = probe or (lambda point: mount_state(BACKEND, point))
         runtime = {path_key(v['path']): v for v in (statuses or [])}
         records = self.registry.records()
         for record in records:
@@ -586,7 +677,7 @@ class Manager:
                 local = record.get('last_mount')
                 live = None
                 if local:
-                    try: live = mount_state(BACKEND, local['mount_point'])
+                    try: live = probe(local['mount_point'])
                     except Exception: live = True
                 record['state'] = 'Unknown / source offline' if current or live else 'Offline'
                 if current: record['mount_point'] = current['mount_point']
@@ -604,7 +695,7 @@ class Manager:
                 record['generation'] = body['generation']
                 record['key_tags'] = body['key_tags']
                 record['metadata_available'] = body['metadata_available']
-                record['unlock_methods'] = ', '.join(filter(None, [f"{body['key_count']} YubiKey" if body['key_count'] else '',
+                record['unlock_methods'] = ' · '.join(filter(None, [f"{body['key_count']} YubiKey" if body['key_count'] else '',
                     'Password' if body['recovery'] else '']))
                 state = runtime.get(path_key(root))
                 if state:
@@ -615,10 +706,10 @@ class Manager:
                         if statefile.exists():
                             with guarded_reader(statefile) as source: saved = archive.unique_json(source.read(65536))
                             record['mount_point'] = saved['mount_point']
-                            record['state'] = 'Unknown / orphan mount' if mount_state(BACKEND, saved['mount_point']) else 'unmounted-awaiting-cleanup'
+                            record['state'] = 'Unknown / orphan mount' if probe(saved['mount_point']) else 'unmounted-awaiting-cleanup'
                         elif record.get('last_mount'):
                             local = record['last_mount']; record['mount_point'] = local['mount_point']
-                            record['state'] = 'Unknown / orphan mount' if mount_state(BACKEND, local['mount_point']) else 'unmounted-awaiting-cleanup'
+                            record['state'] = 'Unknown / orphan mount' if probe(local['mount_point']) else 'unmounted-awaiting-cleanup'
                         else: record['state'] = 'Unmounted'
                 if record['state'] in ('Unknown / orphan mount', 'unknown-mount-owner'):
                     try: record['observed_mount_device'] = mount_device(record['mount_point'])
@@ -642,8 +733,11 @@ class Manager:
         from .storage import selected_root
         root = selected_root(args['key_file']) if args.get('key_file') else safe_path(args['root'], must_exist=True)
         with VaultGuard(root):
+            self._idle(root, cleanup=False)
             with guarded_reader(root / '.config.pb'): pass
             body = self._body(root)
+            from .precheck import public_vault
+            public_vault(self, root, body)
             origin = self.registry.origin(root)
             changed = bool(origin and (origin['uuid'], origin['signing_public']) != (body['uuid'], body['signing_public']))
             if changed and origin.get('pending'):
@@ -660,7 +754,9 @@ class Manager:
             if requires_trust and self.registry.transaction(lambda data: (any(
                     v.get('pending') and v.get('uuid') == body['uuid'] for v in data['origins'].values()), False)):
                 raise VaultError('This identity has a pending import. Restore from the original .yka archive.')
+            archive.verify_restored(root, body['signing_public'], cancel=self.cancel.is_set)
             return {'requires_trust': requires_trust, 'root': str(root),
+                'key_tags': body['key_tags'], 'recovery': body['recovery'],
                 'identity_change': {'previous_origin': origin, 'keyring_sha256': body['keyring_sha256']} if changed else None}
 
     def register(self, args):
@@ -679,6 +775,7 @@ class Manager:
                     raise VaultError('The folder identity changed. Review and confirm adding it as a different vault.')
                 if self.registry.transaction(lambda data: (any(v.get('pending') and v.get('uuid') == body['uuid'] for v in data['origins'].values()), False)):
                     raise VaultError('This identity has a pending import. Restore from the original .yka archive.')
+                archive.verify_restored(root, body['signing_public'], cancel=self.cancel.is_set)
                 verified = native_call(dict(action='verify', root=str(root), **self._auth(args),
                     expected_uuid=body['uuid'], expected_public=body['signing_public']), guard=guard,
                     pin=args.get('pin'), progress=self.progress, cancel=self.cancel.is_set)
@@ -692,7 +789,9 @@ class Manager:
                     raise VaultError('The folder identity changed again. Review the folder before adding it.')
                 verified = self._verified(root, args, guard)
                 record = self._accept(root, verified, args.get('name'))
-        return {'record': record}
+            from .keyring_cleanup import cleanup
+            pending = cleanup(root, verified, guard)
+        return {'record': record, 'keyring_cleanup_pending': pending}
 
     def preferences(self, args):
         record = self.registry.get(args['record_id'])
@@ -713,11 +812,11 @@ class Manager:
         root = safe_path(args['new_path'], must_exist=True)
         with VaultGuard(root) as guard:
             self._idle(root)
+            origin = self.registry.origin(record['path'])
+            if origin and origin.get('pending'): raise VaultError('Re-import the original archive before relocating a pending vault.')
             verified = native_call(dict(action='verify', root=str(root), **self._auth(args),
                 expected_uuid=record['uuid'], expected_public=record['signing_public']), guard=guard,
                 pin=args.get('pin'), progress=self.progress, cancel=self.cancel.is_set)
-            origin = self.registry.origin(record['path'])
-            if origin and origin.get('pending'): raise VaultError('Re-import the original archive before relocating a pending vault.')
             self.registry.check_generation(verified, record['path'])
             archive.verify_restored(root, verified['signing_public'], cancel=self.cancel.is_set)
             self.metadata_cache[path_key(root)] = dict(verified)
@@ -727,8 +826,9 @@ class Manager:
         record = self.registry.get(args['record_id'])
         if record.get('last_mount') and mount_state(BACKEND, record['last_mount']['mount_point']):
             raise VaultError('A recorded mount remains. Confirm unmount before removing the record.')
-        if path_key(record['path']) in self.sessions:
-            _, session, point = self.sessions[path_key(record['path'])]
+        with self.session_mutex: owned = self.sessions.get(path_key(record['path']))
+        if owned:
+            _, session, point = owned
             if session.process.poll() is None or mount_state(BACKEND, point):
                 raise VaultError('The mount is still active or stopping. Use Recover Mount before removing this vault from the list.')
             self.unmount({'root': record['path']})
@@ -741,6 +841,7 @@ class Manager:
         with VaultGuard(root) as guard:
             self._idle(root)
             body = self._body(root)
+            self._key_change_precheck(args, body)
             if args['action'] == 'set-recovery' and body['recovery']:
                 if not args.get('passphrase'): raise VaultError('Enter your current password to change it.')
                 authorization = {'passphrase': args['passphrase']}
@@ -750,6 +851,9 @@ class Manager:
             request['restore_generation'] = self.registry.check_generation(dict(body, generation=None))
             if args['action'] == 'add-device':
                 request['new_device'] = piv.selected_device(args['new_serial'], args['new_slot'], enroll=True)
+                tag = hashlib.sha256(base64.b64decode(request['new_device']['public_key'])).hexdigest()
+                if tag in body['key_tags'] or any((d['serial'], d['slot']) == (request['new_device']['serial'], request['new_device']['slot']) for d in body['devices']):
+                    raise VaultError('This key is already authorized.')
                 request['new_pin'] = args.get('new_pin')
             if args['action'] == 'set-recovery': request['new_passphrase'] = args.get('new_passphrase')
             if args['action'] == 'remove-device':
@@ -764,6 +868,8 @@ class Manager:
                 public = request['new_device']['public_key']
                 devices[public] = {'name': args.get('device_name') or 'YubiKey', 'tested_generation': result['generation'], 'tested_at': datetime.now(timezone.utc).isoformat()}
                 self.registry.update(record['id'], {'devices': devices})
+            from .keyring_cleanup import cleanup
+            result['keyring_cleanup_pending'] = cleanup(root, result, guard)
             return result
 
     def test_unlock(self, args):
@@ -790,6 +896,15 @@ class Manager:
                 self.registry.update(record['id'], {'devices': labels})
         return dict(result, independent_unlock_tested=True)
 
+    @staticmethod
+    def _key_change_precheck(args, body):
+        from .precheck import key_change
+        key_change(args, body)
+
+    def check_operation(self, args):
+        from .precheck import run
+        return run(self, args)
+
     def security(self, args):
         with self.security_mutex:
             return self._security(args)
@@ -812,16 +927,22 @@ class Manager:
         def keep(root): return self.security_scope == 'automatic' and policies.get(path_key(root), True) is False
         with self.session_mutex: roots = list(self.sessions)
         owned_paths = {path_key(root) for root in roots}
-        for root in roots:
+        def stop_one(root):
             if keep(root):
                 try:
                     with self.session_mutex: current = self.sessions.get(root)
                     if current and mount_state(BACKEND, current[2]):
-                        kept.append(root); continue
+                        return 'kept', root
                 except Exception:
-                    failures.append(root); continue
-            try: self.unmount({'root': root}); unmounted.append(root)
-            except Exception: failures.append(root)
+                    return 'failed', root
+            try: self.unmount({'root': root}); return 'unmounted', root
+            except Exception: return 'failed', root
+        # Independent supervisors can stop together. Each unmount retains its
+        # vault's lifecycle lock, so pipe readers and cleanup never overlap.
+        if roots:
+            with ThreadPoolExecutor(max_workers=min(8, len(roots)), thread_name_prefix='YKA unmount') as pool:
+                for outcome, root in pool.map(stop_one, roots):
+                    {'kept': kept, 'failed': failures, 'unmounted': unmounted}[outcome].append(root)
         # A restarted worker does not own surviving mounts. Detect their records
         # without attempting to unmount a volume whose ownership is unconfirmed.
         try:
@@ -867,6 +988,7 @@ class Manager:
             'status': self.status, 'export': self.export, 'import': self.import_,
             'restore-keyring': self.restore_keyring, 'restore-backup': self.restore_backup,
             'check-restore-backup': self.check_restore_backup,
+            'check-operation': self.check_operation,
             'inspect': self.inspect, 'security': self.security, 'resume': self.resume,
               'tasks': lambda a: {'tasks': [t for t in self.jobs.records() if t.get('action') != 'transfer']}, 'transfer': self.transfer, 'recover-unmount': self.recover_unmount,
               'list': lambda a: self.status(a), 'register': self.register, 'registration-info': self.registration_info, 'preferences': self.preferences,
@@ -876,12 +998,14 @@ class Manager:
         if action not in methods: raise VaultError('Unsupported operation.')
         if request.get('record_id'):
             record = self.registry.get(request['record_id'])
-            if record.get('delete_transaction') and action not in ('delete-vault', 'list', 'status', 'size-cache'):
+            deleting = action == 'delete-vault' or (action == 'check-operation' and request.get('operation') == 'delete-vault')
+            if record.get('delete_transaction') and action not in ('list', 'status', 'size-cache') and not deleting:
                 raise VaultError('Finish deleting this vault before using it.')
             if action != 'relocate': request = dict(request, root=record['path'])
         if request.get('root') and action not in ('delete-vault', 'list', 'status', 'size-cache'):
             local = self.registry.by_path(request['root'])
-            if local and local.get('delete_transaction'): raise VaultError('Finish deleting this vault before using it.')
+            if local and local.get('delete_transaction') and not (action == 'check-operation' and request.get('operation') == 'delete-vault'):
+                raise VaultError('Finish deleting this vault before using it.')
         if self.security_pending.is_set() and action not in ('security', 'resume', 'status', 'list', 'unmount', 'inspect', 'tasks', 'recover-unmount', 'remove-record', 'size-cache'):
             raise VaultError('Security event pending. Retry unmount before continuing.')
         from .tasks import TRACKED

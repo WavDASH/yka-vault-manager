@@ -144,8 +144,15 @@ def export_archive(root, output, sign, *, progress=lambda _: None, cancel=lambda
     if not output.parent.is_dir(): raise VaultError('Output parent folder does not exist.')
     partial = output.with_name(output.name + '.' + uuid.uuid4().hex + '.partial')
     on_residual(partial)
+    from .residuals import temporary_output
+    def retain_interrupted(error):
+        # Source loss/change can make even incomplete ciphertext valuable for
+        # recovery. Cancelled or invalid exports with an available source are
+        # disposable; uncertain storage failures are not.
+        return (isinstance(error, OSError) or str(error).startswith('Source ')
+                or not (root / KEY_FILE).is_file() or not (root / '.config.pb').is_file())
     try:
-        with tempfile.TemporaryDirectory(prefix='yka-index-') as scratch, closing(sqlite3.connect(str(Path(scratch) / 'index.sqlite'))) as db:
+        with temporary_output(partial, retain_on_error=retain_interrupted) as staged, tempfile.TemporaryDirectory(prefix='yka-index-') as scratch, closing(sqlite3.connect(str(Path(scratch) / 'index.sqlite'))) as db:
             progress('Scanning encrypted source...')
             index_source(db, root, cancel)
             total = db.execute('select coalesce(sum(size),0) from files').fetchone()[0]
@@ -158,7 +165,7 @@ def export_archive(root, output, sign, *, progress=lambda _: None, cancel=lambda
             progress('Exporting encrypted files...')
             processed = 0; last_progress = time.monotonic()
             hashed = hashlib.sha256(DOMAIN)
-            with manifest.open('xb') as listing, zipfile.ZipFile(partial, 'x', compression=zipfile.ZIP_STORED, allowZip64=True) as archive:
+            with manifest.open('xb') as listing, zipfile.ZipFile(staged, 'w', compression=zipfile.ZIP_STORED, allowZip64=True) as archive:
                 raw = canonical({'header': header}) + b'\n'; listing.write(raw); hashed.update(raw)
                 for number, (name, kind, size, mtime, inode, _) in enumerate(db.execute('select * from files order by path'), 1):
                     check_cancel(cancel)
@@ -204,31 +211,32 @@ def export_archive(root, output, sign, *, progress=lambda _: None, cancel=lambda
             if seen != db.execute('select count(*) from files').fetchone()[0]:
                 raise VaultError('Source file removed. Export stopped.')
             signature = sign(hashed.digest())
-            with zipfile.ZipFile(partial, 'a', compression=zipfile.ZIP_STORED, allowZip64=True) as archive:
+            with zipfile.ZipFile(staged, 'a', compression=zipfile.ZIP_STORED, allowZip64=True) as archive:
                 archive.write(manifest, 'manifest.jsonl')
                 archive.writestr('manifest.sig', canonical({'algorithm': 'Ed25519', 'signature': signature['signature']}))
-            with partial.open('r+b') as result: result.flush(); os.fsync(result.fileno())
+            staged.flush(); os.fsync(staged.fileno())
             # Reopen and hash every archived byte, including exact entry coverage, before publishing.
             progress('Verifying archive...')
-            validate_archive(partial, signing_public=signature['signing_public'], cancel=cancel)
+            preflight(partial, stream=staged)
+            _validate_archive_stream(staged, signature['signing_public'], cancel)
             check_cancel(cancel)
+            staged.close()
             publish_output(partial, output, replace_existing)
             db.close()
         progress('Exported. Signature verified; source consistency unconfirmed.')
         return {'path': str(output), 'authenticated': True, 'source_consistency': 'unconfirmed', 'experimental': True}
     finally:
-        # Interrupted output may contain the only recoverable copy after source
-        # storage fails. Keep it explicitly incomplete, never silently erase it.
-        if partial.exists(): progress('Incomplete archive retained at ' + str(partial) + '. Retry export to a new file; do not treat this partial as a verified backup.')
+        if partial.exists(): progress('Export did not complete. Recovery data remains at ' + str(partial) + '. It is not a verified backup.')
 
 
 
-def _prepare(archive, db):
+def _prepare(archive, db, cancel=lambda: False):
     db.execute('create table entries(path text primary key, folded text unique, kind text, size integer, digest text)')
     infos = archive.infolist()  # stdlib ZIP central directory costs O(entry count); enforced limits below.
     if len(infos) > MAX_ENTRIES + 2: raise VaultError('Too many archive entries.')
     names = set()
     for info in infos:
+        check_cancel(cancel)
         if info.filename in names: raise VaultError('Duplicate archive entries.')
         names.add(info.filename)
         mode = info.external_attr >> 16
@@ -245,6 +253,7 @@ def _prepare(archive, db):
     header = None
     with archive.open('manifest.jsonl') as lines:
         for number in range(MAX_ENTRIES + 2):
+            check_cancel(cancel)
             raw = lines.readline(MAX_METADATA + 1)
             if not raw: break
             if len(raw) > MAX_METADATA or not raw.endswith(b'\n'): raise VaultError('Invalid manifest record.')
@@ -272,6 +281,7 @@ def _prepare(archive, db):
     if db.execute('select count(*) from entries').fetchone()[0] + 2 != len(names):
         raise VaultError('Unlisted archive files.')
     for name, kind in db.execute('select path,kind from entries'):
+        check_cancel(cancel)
         parent = PurePosixPath(name).parent
         while str(parent) != '.':
             row = db.execute('select kind from entries where path=?', (str(parent),)).fetchone()
@@ -339,6 +349,33 @@ def check_restore_identity(metadata, expected):
     return body
 
 
+def public_precheck(stream, *, destination=None, expected=None, cancel=lambda: False):
+    """Reject malformed public data without secrets or extracted/staging files.
+
+    A self-signed header proves consistency, not authority. Rust must still
+    decrypt the selected channel, and extraction must still verify every byte.
+    """
+    preflight(None, stream=stream)
+    metadata = authentication_metadata(stream, cancel)
+    body = parse_header(base64.b64decode(metadata['archive_keyring'], validate=True))
+    check_restore_identity(metadata, expected or body)
+    with zipfile.ZipFile(stream) as source, closing(sqlite3.connect(':memory:')) as db:
+        _, signature, digest = _prepare(source, db, cancel)
+        check_cancel(cancel)
+        try:
+            Ed25519PublicKey.from_public_bytes(base64.b64decode(body['signing_public'], validate=True)).verify(
+                base64.b64decode(signature['signature'], validate=True), digest)
+        except Exception: raise VaultError('Archive is damaged or content does not match.') from None
+        for name, field in (('.yka-key', 'archive_keyring'), ('.config.pb', 'archive_config')):
+            raw = base64.b64decode(metadata[field], validate=True)
+            if db.execute('select digest from entries where path=?', (name,)).fetchone() != (hashlib.sha256(raw).hexdigest(),):
+                raise VaultError('Archive is damaged or content does not match.')
+        total = db.execute('select coalesce(sum(size),0) from entries').fetchone()[0]
+        if destination is not None and shutil.disk_usage(Path(destination).parent).free < total + 64 * 1024 * 1024:
+            raise VaultError('Not enough free disk space.')
+    return metadata, body
+
+
 def import_archive(path, destination, verify, *, authenticated=False, cancel=lambda: False, progress=lambda _: None, before_publish=lambda *_: None, on_residual=lambda _: None, authenticate_first=False):
     path = safe_path(path, must_exist=True)
     destination = safe_path(destination)
@@ -351,8 +388,8 @@ def import_archive(path, destination, verify, *, authenticated=False, cancel=lam
         if authenticate_first:
             if not authenticated: raise VaultError('Backup authentication is required.')
             # Read only bounded encrypted metadata. No destination, staging
-            # directory, SQLite index or extracted files exist at this point.
-            metadata = authentication_metadata(stream, cancel)
+            # directory, disk index or extracted files exist at this point.
+            metadata, _ = public_precheck(stream, destination=destination, cancel=cancel)
             progress('Unlocking the backup. Complete the YubiKey prompt if requested…')
             verified = verify(metadata)
             check_cancel(cancel)
@@ -368,8 +405,10 @@ def _import_archive_stream(stream, destination, verify, authenticated, cancel, p
     stage = destination.with_name('.' + destination.name + '.' + uuid.uuid4().hex + '.staging')
     on_residual(stage)
     private_directory(stage)
+    stage_identity = None; publishing = False
     try:
-        with VaultGuard(stage), tempfile.TemporaryDirectory(prefix='yka-import-') as scratch, zipfile.ZipFile(stream) as archive, closing(sqlite3.connect(str(Path(scratch) / 'index.sqlite'))) as db:
+        with VaultGuard(stage) as stage_guard, tempfile.TemporaryDirectory(prefix='yka-import-') as scratch, zipfile.ZipFile(stream) as archive, closing(sqlite3.connect(str(Path(scratch) / 'index.sqlite'))) as db:
+            stage_identity = list(stage_guard.root_identity)
             progress('Checking archive index...')
             header, signature, digest = _prepare(archive, db)
             total = db.execute('select coalesce(sum(size),0) from entries').fetchone()[0]
@@ -412,11 +451,17 @@ def _import_archive_stream(stream, destination, verify, authenticated, cancel, p
                 verify_restored(stage, result['signing_public'], cancel=cancel)
             db.close()
         check_cancel(cancel)
+        publishing = True  # The callback may commit durable recovery records.
         before_publish(stage, destination, proof)
         os.rename(stage, destination)
     except BaseException:
-        # Keep only ciphertext staging, explicitly incomplete; never erase source or an existing destination.
-        progress('Import did not complete. Encrypted staging files were kept at ' + str(stage) + '; they are not a finished vault.')
+        if not publishing and stage_identity is not None:
+            try:
+                from .residuals import discard_tree
+                discard_tree(stage, stage_identity)
+            except (OSError, VaultError): pass
+        if stage.exists():
+            progress('Import did not complete. Recovery files remain at ' + str(stage) + '.')
         raise
     return {'path': str(destination), 'authenticated': authenticated,
             'source_consistency': header.get('source_consistency', 'unconfirmed'), 'experimental': True}

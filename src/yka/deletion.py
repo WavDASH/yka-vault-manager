@@ -85,7 +85,7 @@ def check_idle(manager, record, root):
         raise VaultError('Unmount this vault and finish any pending operations before deleting it.')
 
 
-def run(manager, args):
+def precheck(manager, args):
     if args.get('confirmed') is not True: raise VaultError('Confirm vault deletion before continuing.')
     record = manager.registry.get(args['record_id'])
     root = safe_path(record['path'])
@@ -100,8 +100,13 @@ def run(manager, args):
         point = (other.get('last_mount') or {}).get('mount_point')
         if point and (within(root, Path(point + '\\' if len(point) == 2 else point)) or within(Path(point), root)):
             raise VaultError('A recorded mount uses this location. Confirm unmount before deleting it.')
-    # Retain an identity lease even after the encrypted root has been removed.
     check_idle(manager, record, root)
+    return record, root
+
+
+def run(manager, args):
+    record, root = precheck(manager, args)
+    # Retain an identity lease even after the encrypted root has been removed.
     with VaultGuard(manager.registry.locks) as lease:
         try: lease.reserve(manager.registry.locks, 'identity:' + record['uuid'])
         except Exception:

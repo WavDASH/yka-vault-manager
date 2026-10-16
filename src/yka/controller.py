@@ -2,7 +2,7 @@
 import json
 import sys
 from PySide6.QtCore import QObject, QProcess, Signal
-from .native import PROJECT
+from .native import PROJECT, diagnostic_fields
 
 BACKGROUND_ACTIONS = frozenset(('list', 'status', 'inspect', 'registration-info', 'tasks', 'size-cache'))
 CONTROL_ACTIONS = BACKGROUND_ACTIONS | {'security', 'resume', 'cancel'}
@@ -112,6 +112,6 @@ class Controller(QObject):
                 self.protocol_failed(); return
             context = self.pending.pop(reply.get('id'), None)
             if not context: continue
-            if 'error' in reply: self.error.emit(context['action'], reply['error'], context)
+            if 'error' in reply: self.error.emit(context['action'], reply['error'], dict(context, **diagnostic_fields(reply)))
             else: self.result.emit(context['action'], reply['result'], context)
             self.changed.emit()

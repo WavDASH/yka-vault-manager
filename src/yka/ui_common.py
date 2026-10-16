@@ -2,7 +2,95 @@
 from .windows import available_drives
 from PySide6.QtCore import Qt, QObject, QEvent, QModelIndex
 from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QComboBox, QLineEdit,
-    QPushButton, QFileDialog, QDialog, QLabel, QProgressBar, QAbstractItemView, QMessageBox, QSizePolicy, QTextEdit, QSpacerItem)
+    QPushButton, QFileDialog, QDialog, QLabel, QProgressBar, QAbstractItemView, QMessageBox, QSizePolicy, QTextEdit, QSpacerItem, QHeaderView)
+
+
+class AdjacentHeader(QHeaderView):
+    """Adjacent divider resizing; window resizing shares space across columns."""
+    def __init__(self, parent):
+        super().__init__(Qt.Horizontal, parent)
+        self._drag_sizes = None; self._drag_section = None; self._adjusting = False
+        self._resize_ready = False
+        self._settled_sizes = None
+        self.setSectionResizeMode(QHeaderView.Interactive)
+        self.setStretchLastSection(True)
+        self.sectionResized.connect(self._balance)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._settled_sizes = [self.sectionSize(i) for i in range(self.count())]
+        self._resize_ready = True
+        # The initial layout happens before resize handling is enabled. Fit it
+        # now as well, including a restored window that is narrower than defaults.
+        self._fit_widths()
+
+    def resizeEvent(self, event):
+        redistribute = (self._resize_ready and self.isVisible() and not self._adjusting
+            and event.oldSize().width() > 0 and event.size().width() != event.oldSize().width())
+        super().resizeEvent(event)
+        if redistribute: self._fit_widths()
+
+    def _fit_widths(self):
+        sections = [i for i in range(self.count()) if not self.isSectionHidden(i)]
+        # Qt can stretch the last section before delivering this resize event.
+        # Use the settled widths so that automatic stretch is not counted twice.
+        saved = self._settled_sizes
+        widths = [saved[i] if saved is not None and len(saved) == self.count() else self.sectionSize(i) for i in sections]
+        if not sections or self.viewport().width() <= 0: return
+        difference = self.viewport().width() - sum(widths)
+        if difference >= 0:
+            share, extra = divmod(difference, len(widths))
+            widths = [width + share + (i < extra) for i, width in enumerate(widths)]
+        else:
+            remaining = -difference; minimum = self.minimumSectionSize()
+            active = [i for i, width in enumerate(widths) if width > minimum]
+            while remaining and active:
+                share = max(1, remaining // len(active))
+                for i in active:
+                    take = min(share, widths[i] - minimum, remaining)
+                    widths[i] -= take; remaining -= take
+                active = [i for i in active if widths[i] > minimum]
+        self._adjusting = True
+        try:
+            self.setStretchLastSection(False)
+            for section, width in zip(sections, widths): self.resizeSection(section, width)
+            self.setStretchLastSection(True)
+        finally:
+            self._adjusting = False
+            self._settled_sizes = [self.sectionSize(i) for i in range(self.count())]
+
+    def mousePressEvent(self, event):
+        self._drag_sizes = [self.sectionSize(i) for i in range(self.count())] if event.button() == Qt.LeftButton else None
+        self._drag_section = None
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        try: super().mouseReleaseEvent(event)
+        finally: self._drag_sizes = None; self._drag_section = None
+
+    def _balance(self, section, old_size, new_size):
+        if self._adjusting: return
+        if self._drag_sizes is None:
+            if self.visualIndex(section) < self.count() - 1:
+                self._settled_sizes = [self.sectionSize(i) for i in range(self.count())]
+            return
+        visual = self.visualIndex(section)
+        if visual < 0 or visual >= self.count() - 1: return
+        if self._drag_section is None: self._drag_section = section
+        if section != self._drag_section: return
+        neighbor = next((self.logicalIndex(i) for i in range(visual + 1, self.count())
+                         if not self.isSectionHidden(self.logicalIndex(i))), None)
+        if neighbor is None: return
+        total = self._drag_sizes[section] + self._drag_sizes[neighbor]
+        minimum = self.minimumSectionSize()
+        width = max(minimum, min(new_size, total - minimum))
+        self._adjusting = True
+        try:
+            self.resizeSection(section, width)
+            self.resizeSection(neighbor, total - width)
+        finally:
+            self._adjusting = False
+            self._settled_sizes = [self.sectionSize(i) for i in range(self.count())]
 
 
 class ModalDialog(QDialog):

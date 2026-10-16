@@ -98,37 +98,41 @@ def checked_transaction(registry, record):
 
 def cleanup(registry, record, cancel=lambda: False, progress=lambda _: None):
     tx, source, destination, stage, manifest = checked_transaction(registry, record)
-    with VaultGuard(destination) as target, guarded_reader(manifest) as listing:
+    with VaultGuard(destination) as target:
         target.reserve(registry.locks, 'identity:' + record['uuid'])
         if list(target.root_identity) != tx['new_id'] or read_header(destination)['keyring_sha256'] != tx['keyring_sha256']:
             raise VaultError('The moved vault changed. Remaining source files were kept.')
-        if digest(listing) != tx['manifest_sha256']: raise VaultError('The move verification record changed. Source files were kept.')
-        with closing(sqlite3.connect(manifest.as_uri() + '?mode=ro', uri=True)) as db:
-            if source.exists():
-                with VaultGuard(source) as original:
-                    if list(original.root_identity) != tx['old_id']: raise VaultError('The original folder changed. It was not deleted.')
-                    # Unknown additions stop cleanup; never recursively erase the source.
-                    for name, kind, _ in entries(source):
-                        if db.execute('select kind from files where path=?', (name,)).fetchone() != (kind,):
-                            raise VaultError('The source contains new files. Remaining source files were kept.')
-                    progress('Removing verified source copies…')
-                    for name, expected in db.execute("select path,digest from files where kind='file' order by case when path='.yka-key' then 1 else 0 end,path"):
-                        archive.check_cancel(cancel); archive.entry_path(name, archive_names=False)
-                        old = source / Path(name); new = destination / Path(name)
-                        if not old.exists(): continue
-                        with guarded_reader(new) as saved, deletable_reader(old) as (stream, handle):
-                            if digest(saved, cancel) != expected or digest(stream, cancel) != expected:
-                                raise VaultError('A file changed after verification. Remaining source files were kept.')
-                            delete_handle(handle)
-                    for (name,) in db.execute("select path from files where kind='directory' order by length(path) desc"):
-                        archive.entry_path(name, archive_names=False); path = safe_path(source / Path(name))
-                        if path.exists():
-                            with pinned_parents(path): path.rmdir()
-                    original.handle.Close(); original.handle = None
-                    safe_path(source / '.manager.lock').unlink(missing_ok=True)
-                    original.prepare_rename(); delete_handle(original.root_handle)
+        if source.exists():
+            with guarded_reader(manifest) as listing:
+                if digest(listing) != tx['manifest_sha256']: raise VaultError('The move verification record changed. Source files were kept.')
+                with closing(sqlite3.connect(manifest.as_uri() + '?mode=ro', uri=True)) as db:
+                    with VaultGuard(source) as original:
+                        if list(original.root_identity) != tx['old_id']: raise VaultError('The original folder changed. It was not deleted.')
+                        # Unknown additions stop cleanup; never recursively erase the source.
+                        for name, kind, _ in entries(source):
+                            if db.execute('select kind from files where path=?', (name,)).fetchone() != (kind,):
+                                raise VaultError('The source contains new files. Remaining source files were kept.')
+                        progress('Removing verified source copies…')
+                        for name, expected in db.execute("select path,digest from files where kind='file' order by case when path='.yka-key' then 1 else 0 end,path"):
+                            archive.check_cancel(cancel); archive.entry_path(name, archive_names=False)
+                            old = source / Path(name); new = destination / Path(name)
+                            if not old.exists(): continue
+                            with guarded_reader(new) as saved, deletable_reader(old) as (stream, handle):
+                                if digest(saved, cancel) != expected or digest(stream, cancel) != expected:
+                                    raise VaultError('A file changed after verification. Remaining source files were kept.')
+                                delete_handle(handle)
+                        for (name,) in db.execute("select path from files where kind='directory' order by length(path) desc"):
+                            archive.entry_path(name, archive_names=False); path = safe_path(source / Path(name))
+                            if path.exists():
+                                with pinned_parents(path): path.rmdir()
+                        original.handle.Close(); original.handle = None
+                        safe_path(source / '.manager.lock').unlink(missing_ok=True)
+                        original.prepare_rename(); delete_handle(original.root_handle)
+        # Keep the recovery record until the manifest is gone. A retry after
+        # deletion can finish without the manifest only when source is absent.
+        if manifest.exists():
+            with deletable_reader(manifest) as (_, handle): delete_handle(handle)
         registry.move_journal(record['id'], None)
-    manifest.unlink(missing_ok=True)
 
 
 def recover(registry, record, *, cancel=lambda: False, progress=lambda _: None):
@@ -153,11 +157,12 @@ def recover(registry, record, *, cancel=lambda: False, progress=lambda _: None):
                 except PermissionError:
                     if list(candidate.iterdir()): raise
             if candidate.exists(): candidate.rmdir()
+        if manifest.exists():
+            with deletable_reader(manifest) as (_, handle): delete_handle(handle)
         registry.move_journal(record['id'], None)
-    manifest.unlink(missing_ok=True)
 
 
-def run(manager, args):
+def check_destination(manager, args):
     record = manager.registry.get(args['record_id'])
     if record.get('move_transaction'): raise VaultError('Finish the interrupted move first.')
     source = safe_path(record['path'], must_exist=True); destination = safe_path(args['destination'])
@@ -172,8 +177,14 @@ def run(manager, args):
         point = (saved.get('last_mount') or {}).get('mount_point')
         if point and within(destination, Path(point + '\\' if len(point) == 2 else point)):
             raise VaultError('Choose a destination outside mounted vaults.')
+    if not destination.parent.is_dir(): raise VaultError('The destination parent folder does not exist.')
+    return record, source, destination
+
+
+def run(manager, args):
+    record, source, destination = check_destination(manager, args)
     stage = destination.with_name('.yka-moving-' + uuid.uuid4().hex)
-    manifest = None
+    manifest = None; stage_identity = None
     try:
         with VaultGuard(source) as original, pinned_parents(destination):
             manager._idle(source)
@@ -184,6 +195,7 @@ def run(manager, args):
             archive.check_cancel(manager.cancel.is_set)
             private_directory(stage)
             with VaultGuard(stage) as incoming:
+                stage_identity = list(incoming.root_identity)
                 folder = manager.registry.directory / 'moves'
                 if not folder.exists(): private_directory(folder)
                 manifest = folder / (uuid.uuid4().hex + '.sqlite')
@@ -246,4 +258,10 @@ def run(manager, args):
         if saved.get('move_transaction') and not saved['move_transaction'].get('committed'):
             try: recover(manager.registry,saved)
             except Exception: manager.progress('The original vault was kept. Use Recover Move to clean up the interrupted copy.')
+        elif not saved.get('move_transaction') and stage_identity is not None:
+            try:
+                from .residuals import discard_tree
+                discard_tree(stage, stage_identity)
+            except (OSError, VaultError):
+                manager.progress('The move stopped. Its temporary folder could not be removed: ' + str(stage))
         raise

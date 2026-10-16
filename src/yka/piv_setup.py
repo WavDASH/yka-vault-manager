@@ -68,13 +68,15 @@ def _write_key(serial, slot, pin, management_key, *, confirmation, expected_publ
             raise VaultError('Change the factory-default PIN, PUK and management key using Yubico Authenticator before creating a key.')
         target = SLOT(int(slot))
         _check_target(session, target, expected_public)
+        if not management_key and not get_pivman_data(session).has_stored_key:
+            raise VaultError('Protect with PIN is not configured. Enable it using Yubico Authenticator, or explicitly choose manual management-key authentication.')
+        if management_key and (not isinstance(management_key, bytes) or len(management_key) != session.get_management_key_metadata().key_type.key_len):
+            raise VaultError('The management key is unavailable or does not match the device management algorithm.')
         stage = "verifying your PIN"
         progress('Verifying your PIV PIN to authorize the selected slot operation…')
         session.verify_pin(pin)
         if not management_key:
             stage = "reading PIN-protected management credentials"
-            if not get_pivman_data(session).has_stored_key:
-                raise VaultError('Protect with PIN is not configured. Enable it using Yubico Authenticator, or explicitly choose manual management-key authentication.')
             management_key = get_pivman_protected_data(session).key
         stage = "authorizing device management"
         progress('Authorizing device management. Touch your YubiKey if it is flashing.')

@@ -88,6 +88,35 @@ pub fn open_bytes(req: &Request, raw: &[u8], config_hash: &str) -> Result<(Signe
         || (!req.expected_public.is_empty() && req.expected_public!=c.body.signing_public) {
         return Err("Vault identity changed".into());
     }
+    // Reject a mismatched config using the signed public header before any KDF
+    // or private-key operation. The decrypted metadata binding is still checked.
+    if config_hash!=c.body.config_sha256 {return Err("SecureFS config/Keyring mismatch".into());}
+    // Public channel constraints do not require a password KDF or PIV touch.
+    match req.action.as_str() {
+        "set-recovery" => {
+            if req.new_passphrase.as_ref().is_none_or(|p| p.chars().count()<8) {
+                return Err("Password must contain at least 8 characters".into());
+            }
+            if c.body.recovery.is_some() && req.passphrase.is_none() {return Err("Current password required".into());}
+        },
+        "remove-recovery" => {
+            if c.body.channels.is_empty() {return Err("Cannot remove the last unlock method".into());}
+            if req.passphrase.is_some() {return Err("Authenticate with a surviving YubiKey".into());}
+        },
+        "remove-device" => {
+            if c.body.channels.len()==1 && c.body.recovery.is_none() {return Err("Cannot remove the last unlock method".into());}
+            if req.device.as_ref().is_some_and(|d|d.serial==req.remove_serial && d.slot==req.remove_slot) {
+                return Err("Authenticate with a surviving unlock method".into());
+            }
+        },
+        "add-device" => {
+            if c.body.channels.len()>=32 {return Err("Too many authorized keys".into());}
+            let device=derive_device(req.new_device.clone().ok_or("Select a new PIV key")?)?;
+            let tag=hex::encode(Sha256::digest(B64.decode(&device.public_key)?));
+            if c.body.channels.iter().any(|c|c.key_tag==tag) {return Err("Device already authorized".into());}
+        },
+        _ => {},
+    }
     let mut clear=Zeroizing::new(Vec::new());
     if let Some(pass)=&req.passphrase {
         let encrypted=B64.decode(c.body.recovery.as_ref().ok_or("No recovery channel")?)?;
@@ -142,6 +171,31 @@ mod tests {
         (SignedKeyring{body,signature},p)
     }
     fn resign(c:&mut Container,p:&Payload) {c.signature=B64.encode(key(p).unwrap().sign(&signed_message(&c.body).unwrap()).to_bytes());}
+    #[test]
+    fn config_mismatch_precedes_private_unlock_but_not_signature_check() {
+        let (k,p)=fixture(); let raw=seal(&k,&p).unwrap();
+        let req:Request=serde_json::from_value(json!({"action":"verify"})).unwrap();
+        // No device or password exists in this request: a private unlock would fail
+        // with a different error. A valid signed header suffices for early rejection.
+        assert_eq!(open_bytes(&req,&raw,&"b".repeat(64)).err().unwrap().to_string(),"SecureFS config/Keyring mismatch");
+        let mut c=decode(&raw).unwrap(); c.body.config_sha256="b".repeat(64);
+        let encoded=serde_json::to_vec(&c).unwrap();
+        let mut tampered=MAGIC.to_vec();tampered.extend((encoded.len() as u32).to_le_bytes());tampered.extend(encoded);
+        assert_ne!(open_bytes(&req,&tampered,&"c".repeat(64)).err().unwrap().to_string(),"SecureFS config/Keyring mismatch");
+        assert_ne!(open_bytes(&req,&raw,&k.body.config_sha256).err().unwrap().to_string(),"SecureFS config/Keyring mismatch");
+    }
+    #[test]
+    fn key_change_constraints_precede_private_unlock() {
+        let (k,p)=fixture();let raw=seal(&k,&p).unwrap();
+        for (request,message) in [
+            (json!({"action":"set-recovery","new_passphrase":"short"}),"Password must contain at least 8 characters"),
+            (json!({"action":"set-recovery","new_passphrase":"valid-length"}),"Current password required"),
+            (json!({"action":"remove-recovery"}),"Cannot remove the last unlock method"),
+        ] {
+            let req:Request=serde_json::from_value(request).unwrap();
+            assert_eq!(open_bytes(&req,&raw,&k.body.config_sha256).err().unwrap().to_string(),message);
+        }
+    }
     #[test]
     fn password_creation_matches_unlock_budget() {
         let (_,p)=fixture();let pass="isolated-test-password";

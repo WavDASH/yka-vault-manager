@@ -18,6 +18,16 @@ PROJECT = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[2]))
 BACKEND = PROJECT / 'vendor/securefs/securefs.exe'
 NATIVE = PROJECT / 'native/target/release/yka-crypto.exe'
 PLUGIN = PROJECT / 'vendor/age-plugin-yubikey-source/target/release/age-plugin-yubikey.exe'
+ERROR_CODES = frozenset(('config_mismatch', 'identity_mismatch', 'device_unauthorized',
+    'metadata_changed', 'backend_timeout', 'filesystem_failed', 'operation_failed'))
+ERROR_STAGES = frozenset(('request', 'authentication', 'keyring_commit', 'securefs_create',
+    'securefs_unmount', 'keyring_create', 'securefs_mount', 'keyring_update', 'archive_sign'))
+
+
+def diagnostic_fields(value):
+    # Only fixed identifiers may enter logs. Never forward arbitrary backend text.
+    return {key: value[key] for key, allowed in (('code', ERROR_CODES), ('stage', ERROR_STAGES))
+            if isinstance(value.get(key), str) and value[key] in allowed}
 
 
 class NativeSession:
@@ -141,7 +151,10 @@ class NativeSession:
                 self.pin = self.new_pin; self.new_pin = None
                 self.send({'action': 'continue'})
             elif event in ('touch', 'progress'): self.progress(message.get('message', 'Processing the operation…'))
-            elif event == 'error': raise VaultError(message['message'])
+            elif event == 'error':
+                error = VaultError(message['message'])
+                error.diagnostic = diagnostic_fields(message)
+                raise error
             else: return message
 
     def close(self):

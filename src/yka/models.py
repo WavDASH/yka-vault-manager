@@ -13,7 +13,7 @@ class VaultModel(QAbstractTableModel):
     def rowCount(self, parent=None): return len(self.records)
     def columnCount(self, parent=None): return len(self.columns)
     def headerData(self, section, orientation, role=Qt.DisplayRole):
-        if role == Qt.DisplayRole and orientation == Qt.Horizontal: return self.columns[section][0]
+        if role in (Qt.DisplayRole, Qt.ToolTipRole) and orientation == Qt.Horizontal: return self.columns[section][0]
     def data(self, index, role=Qt.DisplayRole):
         if not index.isValid(): return None
         record = self.records[index.row()]

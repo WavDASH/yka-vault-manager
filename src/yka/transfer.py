@@ -204,12 +204,17 @@ def output_file(path, paths):
     # temporary file between verification and handle-based publication.
     handle = win32file.CreateFile(str(path), win32con.GENERIC_READ | win32con.GENERIC_WRITE | win32con.DELETE,
         win32con.FILE_SHARE_READ, None, win32con.CREATE_NEW, win32con.FILE_FLAG_SEQUENTIAL_SCAN, None)
-    try: paths.validate_handle(handle, path)
+    try:
+        paths.validate_handle(handle, path)
+        # The kernel removes this unfinished file if the worker exits without
+        # running Python cleanup. Publication explicitly clears disposition.
+        delete_open_file(int(handle))
     except BaseException:
         try: delete_open_file(int(handle))
         finally: handle.Close()
         raise
     with os.fdopen(msvcrt.open_osfhandle(handle.Detach(), os.O_RDWR), 'w+b') as stream:
+        stream._yka_disposable = True
         try: yield stream
         finally:
             if not getattr(stream, '_yka_published', False):
@@ -218,10 +223,10 @@ def output_file(path, paths):
                     raise VaultError(f'The copy stopped, but its temporary file could not be removed: {path}. Check the drive connection and remove this file after closing YKA.') from None
 
 
-def delete_open_file(handle):
+def delete_open_file(handle, delete=True):
     """Delete only the current, still-owned temporary file on handle close."""
     from ctypes import wintypes as W
-    delete = ctypes.c_ubyte(1)
+    delete = ctypes.c_ubyte(bool(delete))
     function = ctypes.WinDLL('kernel32', use_last_error=True).SetFileInformationByHandle
     function.argtypes = [W.HANDLE, ctypes.c_int, ctypes.c_void_p, W.DWORD]; function.restype = W.BOOL
     if not function(handle, 4, ctypes.byref(delete), ctypes.sizeof(delete)):
@@ -238,8 +243,13 @@ def publish_file(stream, target, *, replace):
     ctypes.memmove(ctypes.addressof(info) + RenameInfo.FileName.offset, name, len(name))
     function = ctypes.WinDLL('kernel32', use_last_error=True).SetFileInformationByHandle
     function.argtypes = [W.HANDLE, ctypes.c_int, ctypes.c_void_p, W.DWORD]; function.restype = W.BOOL
-    if not function(msvcrt.get_osfhandle(stream.fileno()), 3, ctypes.byref(info), ctypes.sizeof(info)):
-        raise ctypes.WinError(ctypes.get_last_error())
+    handle = msvcrt.get_osfhandle(stream.fileno())
+    disposable = getattr(stream, '_yka_disposable', False)
+    if disposable: delete_open_file(handle, False)
+    if not function(handle, 3, ctypes.byref(info), ctypes.sizeof(info)):
+        error = ctypes.WinError(ctypes.get_last_error())
+        if disposable: delete_open_file(handle)
+        raise error
     stream._yka_published = True
 
 

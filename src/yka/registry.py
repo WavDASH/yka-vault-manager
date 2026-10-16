@@ -30,16 +30,15 @@ class Registry:
         safe_path(self.locks, must_exist=True)
         self.file = self.directory / 'registry.json'
         self.previous = self.directory / 'registry.previous.json'
+        self._partials_pruned = False
 
     def _write(self, target, encoded):
         safe_path(target)
         staging = self.directory / ('.registry-' + uuid.uuid4().hex + '.partial')
-        try:
-            with staging.open('xb') as out:
-                out.write(encoded); out.flush(); os.fsync(out.fileno())
+        from .residuals import temporary_output
+        with temporary_output(staging) as out:
+            out.write(encoded); out.flush(); os.fsync(out.fileno()); out.close()
             os.replace(staging, target)
-        finally:
-            staging.unlink(missing_ok=True)
 
     def transaction(self, operation, *, forget_previous=False):
         deadline = time.monotonic() + 5
@@ -63,6 +62,10 @@ class Registry:
                     if any(not isinstance(r, dict) or not all(k in r for k in ('id','path','uuid','signing_public')) for r in data['records']): raise ValueError()
                 except (ValueError, TypeError, VaultError):
                     raise VaultError('The saved vault list is damaged or unsupported. It was not changed. Keep registry.json and registry.previous.json for recovery; do not delete pending import records.') from None
+                if not self._partials_pruned:
+                    from .residuals import prune_private_partials
+                    prune_private_partials(self.directory, '.registry-')
+                    self._partials_pruned = True
             result, changed = operation(data)
             if changed:
                 encoded = json.dumps(data, ensure_ascii=False, indent=2).encode()

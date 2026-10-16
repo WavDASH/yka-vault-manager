@@ -55,7 +55,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1
 ```
 
-The portable application is generated under `dist/portable-1.0.2/`. To build the installer, also install **Inno Setup 6** and run `scripts/installer.ps1`. Install WinFsp before testing mounted vaults; building from source does not install the driver.
+The portable application is generated under `dist/portable-1.1.0/`. To build the installer, also install **Inno Setup 6** and run `scripts/installer.ps1`. Install WinFsp before testing mounted vaults; building from source does not install the driver.
 
 ## Project structure
 
@@ -71,7 +71,7 @@ The portable application is generated under `dist/portable-1.0.2/`. To build the
 ## Security and recovery
 
 - Keep the **encrypted vault folder and its `.yka-key` file together**, or keep a complete `.yka` backup. A YubiKey alone cannot recover a missing key file.
-- Removing a key's authorization does **not** revoke access through older backups that still authorize it.
+- Changing or removing passwords or keys does **not** revoke access to older backups. Export a new `.yka` backup after changing unlock methods.
 - Mounted files are accessible in plaintext to software with access to the mounted volume. Removing a YubiKey or putting Windows to sleep does **not** guarantee the vault is unmounted.
 - Backups are authenticated, but exporting is **not an atomic filesystem snapshot**. Avoid changing the encrypted folder during export, and keep independent backups of important data.
 

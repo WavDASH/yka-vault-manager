@@ -1,8 +1,8 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-if exist "%~dp0dist\portable-1.0.2\YkaVaultManager\YkaVaultManager.exe" (
-  start "" "%~dp0dist\portable-1.0.2\YkaVaultManager\YkaVaultManager.exe"
+if exist "%~dp0dist\portable-1.1.0\YkaVaultManager\YkaVaultManager.exe" (
+  start "" "%~dp0dist\portable-1.1.0\YkaVaultManager\YkaVaultManager.exe"
   exit /b 0
 )
 set "PYTHONPATH=%~dp0src"

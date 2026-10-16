@@ -14,6 +14,17 @@ use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const MAX_FRAME: usize = 4 * 1024 * 1024;
 static OUTPUT_LOST: AtomicBool = AtomicBool::new(false);
+thread_local! { static STAGE: std::cell::Cell<&'static str> = const { std::cell::Cell::new("request") }; }
+fn stage(value: &'static str) { STAGE.with(|s| s.set(value)); }
+fn error_code(reason: &str) -> &'static str {
+    if reason.contains("config/Keyring mismatch") { "config_mismatch" }
+    else if reason.contains("identity") || reason.contains("Untrusted volume") { "identity_mismatch" }
+    else if reason.contains("not authorized") { "device_unauthorized" }
+    else if reason.contains("metadata changed") || reason.contains("Keyring changed") { "metadata_changed" }
+    else if reason.contains("timeout") || reason.contains("within 60 seconds") { "backend_timeout" }
+    else if reason.contains("Mount") || reason.contains("mount") || reason.contains("SecureFS") { "filesystem_failed" }
+    else { "operation_failed" }
+}
 
 #[derive(Deserialize)]
 struct Request {
@@ -159,7 +170,7 @@ fn validate(k: &SignedKeyring, p: &Payload) -> Result<()> {
     }
     Ok(())
 }
-fn unlock(req: &Request) -> Result<(SignedKeyring,Payload)> { storage::open(req) }
+fn unlock(req: &Request) -> Result<(SignedKeyring,Payload)> { stage("authentication"); storage::open(req) }
 fn unwrap_payload(k: &SignedKeyring, passphrase: Option<&Zeroizing<String>>, device: Option<&Device>) -> Result<Payload> {
     let mut clear=Zeroizing::new(Vec::new());
     if let Some(pass)=passphrase {
@@ -215,6 +226,7 @@ fn recovery_envelope(p: &Payload, pass: &str) -> Result<String> {
     writer.write_all(&Zeroizing::new(serde_json::to_vec(p)?))?;writer.finish()?;Ok(B64.encode(bytes))
 }
 fn replace_keyring(root: &Path, signed: &SignedKeyring, p: &Payload, original: &[u8]) -> Result<()> {
+    stage("keyring_commit");
     let replacement=storage::seal(signed,p)?;
     if replacement.len()>MAX_FRAME {return Err("Updated Keyring exceeds size limit".into());}
     let path=root.join(".yka-key");
@@ -297,6 +309,7 @@ fn wait_child(child: &mut std::process::Child, seconds: u64) -> Result<std::proc
     }
 }
 fn run_password(req: &Request, args: &[String], password: &str, confirm: bool) -> Result<()> {
+    stage("securefs_create");
     let mut child=command(req).args(args).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn()?;
     let mut input=child.stdin.take().ok_or("Backend input unavailable")?;
     writeln!(input,"{}",password)?;if confirm{writeln!(input,"{}",password)?;}drop(input);
@@ -309,6 +322,7 @@ fn mounted(req: &Request) -> Result<bool> {
     match status.code(){Some(0)=>Ok(true),Some(1)=>Ok(false),_=>Err("Mount state unknown".into())}
 }
 fn unmount(req:&Request)->Result<()> {
+    stage("securefs_unmount");
     let mut child=command(req).args(["unmount",&req.mount_point]).stdout(Stdio::null()).stderr(Stdio::null()).spawn()?;
     let _=wait_child(&mut child,15)?;
     let deadline=Instant::now()+Duration::from_secs(10);
@@ -317,6 +331,7 @@ fn unmount(req:&Request)->Result<()> {
 }
 fn execute(mut req: Request) -> Result<()> {
     if matches!(req.action.as_str(), "archive-verify"|"archive-restore") {
+        stage("authentication");
         // No filesystem path or metadata file is needed before authentication.
         let raw=B64.decode(&req.archive_keyring)?;
         let config_raw=B64.decode(&req.archive_config)?;
@@ -360,6 +375,7 @@ fn execute(mut req: Request) -> Result<()> {
     match req.action.as_str() {
         "derive-device"=>{emit(json!({"event":"result","device":derive_device(req.device.take().ok_or("Missing device")?)?}));},
         "create"=>{
+            stage("keyring_create");
             if req.mode!="lite"&&req.mode!="full"{return Err("Unknown SecureFS mode".into());}
             let mut seed=Zeroizing::new([0u8;32]);let mut password=Zeroizing::new([0u8;32]);OsRng.fill_bytes(seed.as_mut());OsRng.fill_bytes(password.as_mut());
             let p=Payload{uuid:uuid::Uuid::new_v4().to_string(),password:B64.encode(password.as_slice()),signing_seed:B64.encode(seed.as_slice()),metadata_identity:age::x25519::Identity::generate().to_string().expose_secret().to_owned()};
@@ -388,6 +404,7 @@ fn execute(mut req: Request) -> Result<()> {
         },
         "mount"=>{
             let (k,p)=match prepared.take(){Some(value)=>value,None=>unlock(&req)?};
+            stage("securefs_mount");
             req.passphrase=None;
             if mounted(&req)?{return Err("Mount target already occupied".into());}
             // Own the actual filesystem process. SecureFS -b creates a detached
@@ -429,7 +446,7 @@ fn execute(mut req: Request) -> Result<()> {
                 Ok(())
             })();
             if let Err(error)=startup {
-                emit(json!({"event":"error","message":error.to_string()}));
+                emit(json!({"event":"error","message":error.to_string(),"code":error_code(&error.to_string()),"stage":"securefs_mount"}));
                 drop(cleanup);
                 return Ok(());
             }
@@ -456,6 +473,7 @@ fn execute(mut req: Request) -> Result<()> {
         "add-device"|"remove-device"|"set-recovery"|"remove-recovery"=>{
             let original=read_bounded(&req.root.join(".yka-key"))?;
             let (mut k,p)=match prepared.take(){Some(value)=>value,None=>unlock(&req)?};
+            stage("keyring_update");
             if req.action=="set-recovery" && k.body.recovery.is_some() && req.passphrase.is_none() {
                 return Err("Current password required".into());
             }
@@ -508,6 +526,7 @@ fn execute(mut req: Request) -> Result<()> {
         },
         "verify"=>{let (k,_)=unlock(&req)?;let mut info=storage::summary(&k,&req.root)?;info["event"]=json!("result");emit(info);},
         "sign"=>{let (k,p)=match prepared.take(){Some(value)=>value,None=>unlock(&req)?};let message=B64.decode(&req.message)?;
+            stage("archive_sign");
             emit(json!({"event":"result","signature":B64.encode(key(&p)?.sign(&message).to_bytes()),"signing_public":k.body.signing_public}));},
         _=>return Err("Unsupported native operation".into()),
     }Ok(())
@@ -532,22 +551,22 @@ fn main(){
         // Whitelist user-facing explanations; never forward raw backend/plugin output.
         let reason=error.to_string();
         let message=if reason.contains("identity changed") || reason.contains("identity mismatch") || reason.contains("Untrusted volume") {
-            "This folder does not match the expected vault identity. Use a trusted backup; do not replace its Keyring manually."
+            "The vault identity does not match."
         } else if reason.contains("Current password required") {
             "Enter your current password to change it."
         } else if reason.contains("last unlock method") || reason.contains("surviving") {
-            "Use a different, surviving unlock method to authorize this change. At least one working unlock method must remain."
+            "Use another working unlock method."
         } else if reason.contains("already authorized") {
-            "This PIV key is already authorized for this vault. Choose a different key."
+            "This key is already authorized."
         } else if reason.contains("not authorized") {
-            "The selected PIV key is not authorized for this vault. Select an authorized key or use its password."
+            "This key is not authorized for this vault."
         } else if reason.contains("Mount target already occupied") {
-            "The mount location is now in use. Choose another drive letter or an unused folder."
+            "The mount location is in use."
         } else if reason.contains("Keyring changed") || reason.contains("metadata changed") {
-            "The vault metadata changed during this operation. The operation stopped to protect your data."
+            "Vault metadata changed. Operation stopped."
         } else {
-            "Authentication or a backend operation failed. Check the selected unlock method, credentials and vault status."
+            "Operation failed. Check your credentials and vault status."
         };
-        emit(json!({"event":"error","message":message}));std::process::exit(1);
+        emit(json!({"event":"error","message":message,"code":error_code(&reason),"stage":STAGE.with(|s| s.get())}));std::process::exit(1);
     }
 }

@@ -70,7 +70,9 @@ def main():
             if control:
                 with task_lock: result['tasks_pending'] = bool(active)
             emit({'id': request_id, 'record_id': request.get('record_id'), 'result': result})
-        except VaultError as error: emit({'id': request_id, 'error': str(error)})
+        except VaultError as error:
+            from .native import diagnostic_fields
+            emit({'id': request_id, 'error': str(error), **diagnostic_fields(getattr(error, 'diagnostic', {}))})
         except Exception as error:
             if request.get('action') == 'restore-backup':
                 # Report diagnostic codes, never raw exception text or credentials.
