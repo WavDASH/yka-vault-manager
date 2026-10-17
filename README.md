@@ -9,7 +9,6 @@ A Windows desktop app for creating and managing encrypted folders with a **YubiK
 - **Portable backups** — Export and import signed `.yka` backups, or restore an earlier backup to the same verified vault.
 - **Safe file copying** — Copy files into or out of mounted vaults with optional content verification.
 - **Vault sizes** — View cached encrypted-folder sizes in the vault list and General settings.
-- **Safer operation handling** — Check mount locations before unlocking, isolate unresponsive YubiKeys, and recover interrupted mount sessions without closing unrelated mounts.
 - **Windows integration** — System tray, saved mount preferences, vault status monitoring, and optional automatic unmount requests.
 
 ## Getting started
@@ -40,7 +39,7 @@ flowchart TB
     SecureFS --> Storage["Encrypted vault folder"]
 ```
 
-The interface, vault management, and cryptographic operations are separate components. Python coordinates tasks while Rust handles unlock operations and supervises SecureFS mounts. Read-only PIV detection and signing use short-lived helpers with timeouts and cancellation; device setup remains explicitly confirmed.
+The interface, vault management, and cryptographic operations are separate components. Python coordinates tasks while Rust handles unlock operations and supervises SecureFS mounts.
 
 ## Build from source
 
