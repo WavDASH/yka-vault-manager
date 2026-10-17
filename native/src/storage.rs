@@ -83,7 +83,7 @@ pub fn open(req: &Request) -> Result<(SignedKeyring, Payload)> {
     open_bytes(req, &read_bounded(&req.root.join(".yka-key"))?, &hash_file(&config(&req.root)?)?)
 }
 pub fn open_bytes(req: &Request, raw: &[u8], config_hash: &str) -> Result<(SignedKeyring, Payload)> {
-    let c=decode(raw)?;
+    let c=decode(raw).map_err(|_| AuthFailure::Keyring)?;
     if (!req.expected_uuid.is_empty() && req.expected_uuid!=c.body.uuid)
         || (!req.expected_public.is_empty() && req.expected_public!=c.body.signing_public) {
         return Err("Vault identity changed".into());
@@ -122,8 +122,9 @@ pub fn open_bytes(req: &Request, raw: &[u8], config_hash: &str) -> Result<(Signe
         let encrypted=B64.decode(c.body.recovery.as_ref().ok_or("No recovery channel")?)?;
         let mut identity=age::scrypt::Identity::new(SecretString::from(pass.to_string()));
         identity.set_max_work_factor(PASSWORD_WORK_FACTOR);
-        age::Decryptor::new(encrypted.as_slice())?.decrypt(std::iter::once(&identity as &dyn age::Identity))?
-            .take(MAX_FRAME as u64+1).read_to_end(&mut clear)?;
+        age::Decryptor::new(encrypted.as_slice()).map_err(|_| AuthFailure::Keyring)?
+            .decrypt(std::iter::once(&identity as &dyn age::Identity)).map_err(|_| AuthFailure::Password)?
+            .take(MAX_FRAME as u64+1).read_to_end(&mut clear).map_err(|_| AuthFailure::Password)?;
     } else {
         let expected=derive_device(req.device.clone().ok_or("Select a connected PIV device")?)?;
         let tag=hex::encode(Sha256::digest(B64.decode(&expected.public_key)?));
@@ -131,12 +132,13 @@ pub fn open_bytes(req: &Request, raw: &[u8], config_hash: &str) -> Result<(Signe
         let identity:age::plugin::Identity=expected.identity.parse()?;
         let plugin=age::plugin::IdentityPluginV1::new("yubikey", &[identity], Ui::new())?;
         let encrypted=B64.decode(&channel.encrypted)?;
-        age::Decryptor::new(encrypted.as_slice())?.decrypt(std::iter::once(&plugin as &dyn age::Identity))?
-            .take(MAX_FRAME as u64+1).read_to_end(&mut clear)?;
+        age::Decryptor::new(encrypted.as_slice()).map_err(|_| AuthFailure::Keyring)?
+            .decrypt(std::iter::once(&plugin as &dyn age::Identity)).map_err(|_| AuthFailure::Device)?
+            .take(MAX_FRAME as u64+1).read_to_end(&mut clear).map_err(|_| AuthFailure::Device)?;
     }
     if clear.len()>MAX_FRAME {return Err("Payload too large".into());}
-    let p:Payload=serde_json::from_slice(&clear)?;
-    let k=decrypt_metadata(&c,&p)?;
+    let p:Payload=serde_json::from_slice(&clear).map_err(|_| AuthFailure::Keyring)?;
+    let k=decrypt_metadata(&c,&p).map_err(|_| AuthFailure::Keyring)?;
     if req.passphrase.is_none() {
         let selected=derive_device(req.device.clone().ok_or("Missing device")?)?;
         if !k.body.devices.iter().any(|d|d.serial==selected.serial && d.slot==selected.slot && d.public_key==selected.public_key) {

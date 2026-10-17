@@ -677,6 +677,13 @@ impl Connection {
             }
         };
         if let Err(e) = self.yubikey.verify_pin(pin.expose_secret().as_bytes()) {
+            // Fixed diagnostic callbacks; never forward a PIN or localized error text.
+            let code = match &e {
+                yubikey::Error::WrongPin { .. } => Some("YKA:PIN_INCORRECT"),
+                yubikey::Error::PinLocked => Some("YKA:PIN_BLOCKED"),
+                _ => None,
+            };
+            if let Some(code) = code { let _ = callbacks.message(code); }
             return Ok(Err(identity::Error::Identity {
                 index: self.identity_index,
                 message: format!("{:?}", Error::YubiKey(e)),

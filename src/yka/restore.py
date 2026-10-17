@@ -8,7 +8,7 @@ from .native import BACKEND
 def identity(guard): return list(guard.root_identity)
 
 
-def cleanup(registry, record):
+def cleanup(registry, record, *, cancel=None):
     tx=record.get('restore_transaction')
     if not tx or not tx.get('committed'): return
     root=safe_path(tx['root']); old=safe_path(tx['old'])
@@ -28,7 +28,10 @@ def cleanup(registry, record):
             try: uuid.UUID(backup.name.removeprefix('.yka-key-rollback-'))
             except ValueError: continue
             safe_path(backup, must_exist=True).unlink()
-        if old.exists():
+        if old.exists() and cancel is not None:
+            from .residuals import discard_tree
+            discard_tree(old, tx['old_id'], cancel=cancel)
+        elif old.exists():
             # Pin the exact root throughout recursive deletion. Windows rmtree
             # unlinks junctions rather than traversing their targets.
             with VaultGuard(old) as guard:
@@ -67,9 +70,11 @@ def commit(registry, record, current, incoming, verified):
         raise
 
 
-def recover(registry, record):
+def recover(registry, record, *, cancel=None):
     tx=record.get('restore_transaction')
     if not tx:return
+    from .archive import check_cancel
+    check_cancel(cancel or (lambda: False))
     root=safe_path(tx['root']);old=safe_path(tx['old']);staged=safe_path(tx['staged'])
     if root != Path(record['path']) or old.parent!=root.parent or staged.parent!=root.parent or not old.name.startswith('.yka-replaced-'):
         raise VaultError('Interrupted restore paths could not be verified.')
@@ -79,7 +84,7 @@ def recover(registry, record):
     with VaultGuard(registry.locks) as lease:
         lease.reserve(registry.locks,'identity:'+record['uuid'])
         if tx.get('committed'):
-            cleanup(registry,record);return
+            cleanup(registry,record,cancel=cancel);return
         with pinned_parents(root):
             if old.exists():
                 with VaultGuard(old) as original:
@@ -93,5 +98,5 @@ def recover(registry, record):
                 with VaultGuard(root) as original:
                     if identity(original)!=tx['old_id']:raise VaultError('Original restore folder is missing.')
             from .residuals import discard_tree
-            discard_tree(staged, tx['new_id'])
+            discard_tree(staged, tx['new_id'], cancel=cancel)
             registry.restore_journal(record['id'],None)

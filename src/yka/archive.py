@@ -1,6 +1,6 @@
 """Streaming, Store-only ZIP64 version 2 format; signed manifest; bounded disk index."""
 import base64
-from contextlib import closing, nullcontext
+from contextlib import closing, nullcontext, ExitStack
 import hashlib
 import json
 import os
@@ -10,12 +10,11 @@ import sqlite3
 import stat
 import struct
 import tempfile
-import time
 import unicodedata
 import uuid
 import zipfile
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-from .windows import VaultError, safe_path, guarded_reader, private_directory, VaultGuard, pinned_parents, new_file, output_identity, publish_output
+from .windows import VaultError, safe_path, guarded_reader, private_directory, VaultGuard, pinned_parents, new_file, output_identity
 
 DOMAIN = b'YKA-ARCHIVE-2\x00'
 from .storage import KEY_FILE, internal_file, parse_header
@@ -124,17 +123,9 @@ def tree(root):
                 else: raise VaultError('Unsupported source file type.')
 
 
-def index_source(db, root, cancel):
-    db.execute('create table files(path text primary key, kind text, size integer, mtime integer, inode integer, digest text)')
-    for count, (name, kind, st) in enumerate(tree(root), 1):
-        check_cancel(cancel)
-        if count > MAX_ENTRIES: raise VaultError('Too many source entries.')
-        db.execute('insert into files values(?,?,?,?,?,null)',
-                   (name, kind, st.st_size if kind == 'file' else 0, st.st_mtime_ns, st.st_ino))
-    db.commit()
-
-
-def export_archive(root, output, sign, *, progress=lambda _: None, cancel=lambda: False, replace_existing=None, on_residual=lambda _: None):
+def export_archive(root, output, sign, *, progress=lambda _: None, cancel=lambda: False, replace_existing=None, on_residual=lambda _: None, on_temporary=lambda *_: None, on_retain=lambda: None, plan=None, report=None):
+    from .exporting import ExportProgress, ExportSource, ExportPlan, measure_export, export_header
+    from .transfer import locked_file, check_streams
     root = safe_path(root, must_exist=True)
     output = safe_path(output)
     if output == root or root in output.parents: raise VaultError('Save the archive outside this vault.')
@@ -144,90 +135,76 @@ def export_archive(root, output, sign, *, progress=lambda _: None, cancel=lambda
     if not output.parent.is_dir(): raise VaultError('Output parent folder does not exist.')
     partial = output.with_name(output.name + '.' + uuid.uuid4().hex + '.partial')
     on_residual(partial)
-    from .residuals import temporary_output
+    from .export_cleanup import disposable_output, publish
     def retain_interrupted(error):
-        # Source loss/change can make even incomplete ciphertext valuable for
-        # recovery. Cancelled or invalid exports with an available source are
-        # disposable; uncertain storage failures are not.
         return (isinstance(error, OSError) or str(error).startswith('Source ')
                 or not (root / KEY_FILE).is_file() or not (root / '.config.pb').is_file())
+    source_tree = ExportSource(root, cancel); report = report or ExportProgress(progress)
     try:
-        with temporary_output(partial, retain_on_error=retain_interrupted) as staged, tempfile.TemporaryDirectory(prefix='yka-index-') as scratch, closing(sqlite3.connect(str(Path(scratch) / 'index.sqlite'))) as db:
-            progress('Scanning encrypted source...')
-            index_source(db, root, cancel)
-            total = db.execute('select coalesce(sum(size),0) from files').fetchone()[0]
-            if shutil.disk_usage(output.parent).free < total + 64 * 1024 * 1024:
-                raise VaultError('Not enough free disk space.')
-            header = {'type': 'YKA', 'schema': '2', 'compression': 'store',
-                'source_consistency': 'unconfirmed', 'source_detection': 'before-after-stat-and-hash',
-                'experimental': True}
+        # Manager measures before authentication, under the same vault lease.
+        # Direct callers use the same single metadata walk here.
+        plan = plan or measure_export(root, output, cancel, report)
+        if not isinstance(plan, ExportPlan) or (plan.root, plan.output) != (root, output):
+            raise VaultError('The backup destination changed. Start export again.')
+        total, files, folders = plan.total, plan.files, plan.folders
+        check_cancel(cancel)
+        plan.check_space()
+        with tempfile.TemporaryDirectory(prefix='yka-export-') as scratch, disposable_output(partial, retain_interrupted, on_retain) as staged:
+            on_temporary(partial, output, staged, Path(scratch))
+            header = export_header()
             manifest = Path(scratch) / 'manifest.jsonl'
-            progress('Exporting encrypted files...')
-            processed = 0; last_progress = time.monotonic()
-            hashed = hashlib.sha256(DOMAIN)
-            with manifest.open('xb') as listing, zipfile.ZipFile(staged, 'w', compression=zipfile.ZIP_STORED, allowZip64=True) as archive:
+            number = 0; hashed = hashlib.sha256(DOMAIN)
+            report.start(total, files)
+            with manifest.open('xb') as listing, zipfile.ZipFile(staged, 'w', compression=zipfile.ZIP_STORED, allowZip64=True) as archive, closing(source_tree.walk()) as walker:
                 raw = canonical({'header': header}) + b'\n'; listing.write(raw); hashed.update(raw)
-                for number, (name, kind, size, mtime, inode, _) in enumerate(db.execute('select * from files order by path'), 1):
-                    check_cancel(cancel)
+                for path, name, kind, info in walker:
+                    check_cancel(cancel); number += 1
+                    size = info.st_size if kind == 'file' else 0
                     record = {'path': name, 'kind': kind, 'size': size}
                     if kind == 'directory': archive.writestr(name + '/', b'')
                     else:
-                        digest = hashlib.sha256()
-                        copied = 0
-                        with guarded_reader(root / Path(name)) as source, archive.open(name, 'w', force_zip64=True) as dest:
+                        digest = hashlib.sha256(); copied = 0
+                        # As in Safe Transfer, keep the current source locked and
+                        # compare its identity/size/timestamp before and after reading.
+                        with locked_file(path, source_tree.paths) as source, archive.open(name, 'w', force_zip64=True) as dest:
+                            check_streams(path, source_tree.paths)
                             before = os.fstat(source.fileno())
-                            if (before.st_size, before.st_mtime_ns, before.st_ino) != (size, mtime, inode):
+                            if (before.st_size, before.st_mtime_ns) != (size, info.st_mtime_ns):
                                 raise VaultError('Source changed. Export stopped.')
                             while chunk := source.read(CHUNK):
-                                check_cancel(cancel)
-                                digest.update(chunk); dest.write(chunk); copied += len(chunk); processed += len(chunk)
-                                if time.monotonic() - last_progress >= 0.5:
-                                    progress(f'Exporting encrypted files: {processed:,} of {total:,} bytes ({processed * 100 // max(total, 1)}%).')
-                                    last_progress = time.monotonic()
+                                check_cancel(cancel); digest.update(chunk); dest.write(chunk)
+                                copied += len(chunk); report.copied += len(chunk)
+                                report.report('Exporting backup')
                             after = os.fstat(source.fileno())
-                            if copied != size or (after.st_size, after.st_mtime_ns, after.st_ino) != (size, mtime, inode):
+                            if (copied != size or (after.st_size, after.st_mtime_ns, after.st_ino, after.st_dev) !=
+                                (size, before.st_mtime_ns, before.st_ino, before.st_dev)):
                                 raise VaultError('Source changed during reading. Export stopped.')
-                        record['sha256'] = digest.hexdigest()
-                        db.execute('update files set digest=? where path=?', (record['sha256'], name))
+                        record['sha256'] = digest.hexdigest(); report.completed += 1
                     raw = canonical(record) + b'\n'; listing.write(raw); hashed.update(raw)
                     if listing.tell() > MAX_MANIFEST: raise VaultError('Manifest exceeds size limit.')
-                    if number % 5000 == 0: progress(f'Exported {number:,} entries.')
+                    report.report('Exporting backup')
                 listing.flush(); os.fsync(listing.fileno())
-            # A second tree/content sweep detects ordinary concurrent changes; it is not a snapshot guarantee.
-            progress('Checking source changes...')
-            seen = 0
-            for name, kind, st in tree(root):
-                check_cancel(cancel)
-                expected = db.execute('select kind,size,mtime,inode,digest from files where path=?', (name,)).fetchone()
-                if expected is None or expected[:4] != (kind, st.st_size if kind == 'file' else 0, st.st_mtime_ns, st.st_ino):
-                    raise VaultError('Source directory changed. Export stopped.')
-                if kind == 'file':
-                    digest = hashlib.sha256()
-                    with guarded_reader(root / Path(name)) as source:
-                        while chunk := source.read(CHUNK):
-                            check_cancel(cancel); digest.update(chunk)
-                    if digest.hexdigest() != expected[4]: raise VaultError('Source content changed. Export stopped.')
-                seen += 1
-            if seen != db.execute('select count(*) from files').fetchone()[0]:
-                raise VaultError('Source file removed. Export stopped.')
-            signature = sign(hashed.digest())
+            if number != files + folders or report.copied != total:
+                raise VaultError('Source directory changed. Export stopped.')
+            report.report('Exporting backup', force=True); check_cancel(cancel)
+            signature = sign(hashed.digest()); check_cancel(cancel)
             with zipfile.ZipFile(staged, 'a', compression=zipfile.ZIP_STORED, allowZip64=True) as archive:
                 archive.write(manifest, 'manifest.jsonl')
                 archive.writestr('manifest.sig', canonical({'algorithm': 'Ed25519', 'signature': signature['signature']}))
             staged.flush(); os.fsync(staged.fileno())
-            # Reopen and hash every archived byte, including exact entry coverage, before publishing.
-            progress('Verifying archive...')
+            # The second round reads the archive, never the source tree. Metadata,
+            # every file hash, and the signature must pass before publication.
+            report.completed = 0
+            report.report('Verifying backup', force=True)
             preflight(partial, stream=staged)
-            _validate_archive_stream(staged, signature['signing_public'], cancel)
+            _validate_archive_stream(staged, signature['signing_public'], cancel, report=report, index_directory=Path(scratch))
             check_cancel(cancel)
-            staged.close()
-            publish_output(partial, output, replace_existing)
-            db.close()
+            publish(staged, output, replace_existing)
+        report.report('Backup complete', force=True, complete=True)
         progress('Exported. Signature verified; source consistency unconfirmed.')
         return {'path': str(output), 'authenticated': True, 'source_consistency': 'unconfirmed', 'experimental': True}
     finally:
         if partial.exists(): progress('Export did not complete. Recovery data remains at ' + str(partial) + '. It is not a verified backup.')
-
 
 
 def _prepare(archive, db, cancel=lambda: False):
@@ -302,9 +279,11 @@ def validate_archive(path, *, signing_public=None, cancel=lambda: False):
         return _validate_archive_stream(stream, signing_public, cancel)
 
 
-def _validate_archive_stream(stream, signing_public, cancel):
-    with tempfile.TemporaryDirectory(prefix='yka-verify-') as scratch, zipfile.ZipFile(stream) as archive, closing(sqlite3.connect(str(Path(scratch) / 'index.sqlite'))) as db:
-        header, signature, digest = _prepare(archive, db)
+def _validate_archive_stream(stream, signing_public, cancel, *, report=None, index_directory=None):
+    workspace = nullcontext(index_directory) if index_directory is not None else tempfile.TemporaryDirectory(prefix='yka-verify-')
+    with workspace as scratch, zipfile.ZipFile(stream) as archive, closing(sqlite3.connect(str(Path(scratch) / 'index.sqlite'))) as db:
+        db.execute('pragma journal_mode=off'); db.execute('pragma synchronous=off')
+        header, signature, digest = _prepare(archive, db, cancel)
         for name, kind, size, expected in db.execute('select path,kind,size,digest from entries'):
             check_cancel(cancel)
             if kind == 'directory': continue
@@ -312,11 +291,16 @@ def _validate_archive_stream(stream, signing_public, cancel):
             with archive.open(name) as source:
                 while chunk := source.read(CHUNK):
                     check_cancel(cancel); hashed.update(chunk); actual += len(chunk)
+                    if report:
+                        report.verified += len(chunk); report.report('Verifying backup')
                     if actual > size: raise VaultError('Archive content exceeds declared size.')
             if actual != size or hashed.hexdigest() != expected: raise VaultError('Archive is damaged or content does not match.')
+            if report:
+                report.completed += 1; report.report('Verifying backup')
         if signing_public:
             Ed25519PublicKey.from_public_bytes(base64.b64decode(signing_public, validate=True)).verify(
                 base64.b64decode(signature['signature'], validate=True), digest)
+        if report: report.report('Verifying backup', force=True)
         db.close()
         return dict(header, authenticated=bool(signing_public))
 
@@ -371,12 +355,14 @@ def public_precheck(stream, *, destination=None, expected=None, cancel=lambda: F
             if db.execute('select digest from entries where path=?', (name,)).fetchone() != (hashlib.sha256(raw).hexdigest(),):
                 raise VaultError('Archive is damaged or content does not match.')
         total = db.execute('select coalesce(sum(size),0) from entries').fetchone()[0]
-        if destination is not None and shutil.disk_usage(Path(destination).parent).free < total + 64 * 1024 * 1024:
-            raise VaultError('Not enough free disk space.')
+        if destination is not None:
+            from .capacity import check_restore_space
+            check_restore_space(destination, total, source.getinfo('manifest.jsonl').file_size,
+                                db.execute('select count(*) from entries').fetchone()[0])
     return metadata, body
 
 
-def import_archive(path, destination, verify, *, authenticated=False, cancel=lambda: False, progress=lambda _: None, before_publish=lambda *_: None, on_residual=lambda _: None, authenticate_first=False):
+def import_archive(path, destination, verify, *, authenticated=False, cancel=lambda: False, progress=lambda _: None, before_publish=lambda *_: None, on_residual=lambda _: None, authenticate_first=False, report=None, on_stage=lambda *_: None):
     path = safe_path(path, must_exist=True)
     destination = safe_path(destination)
     if destination.exists(): raise VaultError('Import folder already exists. Choose a new folder.')
@@ -393,12 +379,15 @@ def import_archive(path, destination, verify, *, authenticated=False, cancel=lam
             progress('Unlocking the backup. Complete the YubiKey prompt if requested…')
             verified = verify(metadata)
             check_cancel(cancel)
-            progress('Checking the backup signature and all file hashes. Your current vault has not been changed…')
-            _validate_archive_stream(stream, verified['signing_public'], cancel)
-        return _import_archive_stream(stream, destination, verify, authenticated, cancel, progress, before_publish, on_residual, verified)
+            # Content hashes are checked while extracting, then the written files
+            # are read back. Do not add a third full read of the input archive.
+        return _import_archive_stream(stream, destination, verify, authenticated, cancel, progress, before_publish, on_residual, verified, report, on_stage)
 
 
-def _import_archive_stream(stream, destination, verify, authenticated, cancel, progress, before_publish, on_residual, verified=None):
+def _import_archive_stream(stream, destination, verify, authenticated, cancel, progress, before_publish, on_residual, verified=None, report=None, on_stage=lambda *_: None):
+    from .exporting import ExportProgress
+    from .transfer import Paths
+    report = report or ExportProgress(progress, restoring=True)
     destination = safe_path(destination)
     if destination.exists(): raise VaultError('Import folder already exists. Choose a new folder.')
     if not destination.parent.is_dir(): raise VaultError('Import parent folder does not exist.')
@@ -409,31 +398,47 @@ def _import_archive_stream(stream, destination, verify, authenticated, cancel, p
     try:
         with VaultGuard(stage) as stage_guard, tempfile.TemporaryDirectory(prefix='yka-import-') as scratch, zipfile.ZipFile(stream) as archive, closing(sqlite3.connect(str(Path(scratch) / 'index.sqlite'))) as db:
             stage_identity = list(stage_guard.root_identity)
-            progress('Checking archive index...')
-            header, signature, digest = _prepare(archive, db)
+            # Persist exact directory ownership before extracting any payload.
+            # Both names are recorded before the eventual staging rename.
+            on_stage(stage, destination, stage_identity, Path(scratch))
+            header, signature, digest = _prepare(archive, db, cancel)
+            if verified is not None:
+                Ed25519PublicKey.from_public_bytes(base64.b64decode(verified['signing_public'], validate=True)).verify(
+                    base64.b64decode(signature['signature'], validate=True), digest)
             total = db.execute('select coalesce(sum(size),0) from entries').fetchone()[0]
-            if shutil.disk_usage(stage).free < total + 64 * 1024 * 1024: raise VaultError('Not enough free disk space.')
-            progress('Restoring encrypted files...')
-            processed = 0; last_progress = time.monotonic()
-            for number, (name, kind, size, expected) in enumerate(db.execute('select path,kind,size,digest from entries order by length(path),path'), 1):
-                check_cancel(cancel)
-                target = safe_path(stage / Path(name))
-                if stage not in target.parents: raise VaultError('Archive path escapes the import folder.')
-                if kind == 'directory':
-                    with pinned_parents(target): target.mkdir()
-                    continue
-                hashed = hashlib.sha256(); copied = 0
-                with archive.open(name) as source, new_file(target) as output:
-                    while chunk := source.read(CHUNK):
-                        check_cancel(cancel); copied += len(chunk)
-                        if copied > size: raise VaultError('Archive size limit exceeded.')
-                        hashed.update(chunk); output.write(chunk); processed += len(chunk)
-                        if time.monotonic() - last_progress >= 0.5:
-                            progress(f'Restoring encrypted files: {processed:,} of {total:,} bytes ({processed * 100 // max(total, 1)}%).')
-                            last_progress = time.monotonic()
-                    output.flush(); os.fsync(output.fileno())
-                if copied != size or hashed.hexdigest() != expected: raise VaultError('Restored content verification failed.')
-                if number % 5000 == 0: progress(f'Restored {number:,} entries.')
+            from .capacity import check_restore_space
+            check_restore_space(stage, total, archive.getinfo('manifest.jsonl').file_size,
+                                db.execute('select count(*) from entries').fetchone()[0])
+            files = db.execute("select count(*) from entries where kind='file'").fetchone()[0]
+            report.start(total, files)
+            paths = Paths(); parents = []
+            with paths.directory(stage):
+                try:
+                    for name, kind, size, expected in db.execute('select path,kind,size,digest from entries order by path'):
+                        check_cancel(cancel)
+                        target = stage / Path(name)  # Names and all parents validated by _prepare.
+                        if stage not in target.parents: raise VaultError('Archive path escapes the import folder.')
+                        while parents and parents[-1][0] not in target.parents:
+                            _, scope = parents.pop(); scope.close()
+                        if kind == 'directory':
+                            with paths.parents(target): target.mkdir()
+                            scope = ExitStack()
+                            try: scope.enter_context(paths.directory(target))
+                            except BaseException: scope.close(); raise
+                            parents.append((target, scope)); continue
+                        hashed = hashlib.sha256(); copied = 0
+                        with archive.open(name) as source, new_file(target, paths=paths) as output:
+                            while chunk := source.read(CHUNK):
+                                check_cancel(cancel); copied += len(chunk)
+                                if copied > size: raise VaultError('Archive size limit exceeded.')
+                                hashed.update(chunk); output.write(chunk); report.copied += len(chunk)
+                                report.report('Restoring backup')
+                            output.flush(); os.fsync(output.fileno())
+                        if copied != size or hashed.hexdigest() != expected: raise VaultError('Restored content verification failed.')
+                        report.completed += 1; report.report('Restoring backup')
+                finally:
+                    for _, scope in reversed(parents): scope.close()
+            report.report('Restoring backup', force=True)
             proof = {'signature': signature['signature'], 'digest': base64.b64encode(digest).decode(),
                      'source_consistency': header.get('source_consistency', 'unconfirmed')}
             with archive.open('manifest.jsonl') as source, (stage / '.import-manifest.jsonl').open('xb') as output:
@@ -446,11 +451,23 @@ def _import_archive_stream(stream, destination, verify, authenticated, cancel, p
             Ed25519PublicKey.from_public_bytes(base64.b64decode(keyring['signing_public'], validate=True)).verify(
                 base64.b64decode(signature['signature'], validate=True), digest)
             if authenticated:
-                progress('Verifying restored identity and content...')
                 result = verified if verified is not None else verify(stage)
-                verify_restored(stage, result['signing_public'], cancel=cancel)
+                Ed25519PublicKey.from_public_bytes(base64.b64decode(result['signing_public'], validate=True)).verify(
+                    base64.b64decode(signature['signature'], validate=True), digest)
+                _verify_staging(stage, db, cancel, report)
+                # These small recovery sidecars must also match the authenticated
+                # manifest before publication; they are not another data sweep.
+                with guarded_reader(stage / '.import-proof.json') as saved:
+                    if saved.read(MAX_METADATA + 1) != canonical(proof):
+                        raise VaultError('Recovery proof changed.')
+                saved_digest = hashlib.sha256(DOMAIN)
+                with guarded_reader(stage / '.import-manifest.jsonl') as saved:
+                    while chunk := saved.read(CHUNK):
+                        check_cancel(cancel); saved_digest.update(chunk)
+                if saved_digest.digest() != digest: raise VaultError('Recovery manifest changed.')
             db.close()
         check_cancel(cancel)
+        report.report('Finishing restore', force=True)
         publishing = True  # The callback may commit durable recovery records.
         before_publish(stage, destination, proof)
         os.rename(stage, destination)
@@ -465,6 +482,35 @@ def _import_archive_stream(stream, destination, verify, authenticated, cancel, p
         raise
     return {'path': str(destination), 'authenticated': authenticated,
             'source_consistency': header.get('source_consistency', 'unconfirmed'), 'experimental': True}
+
+
+def _verify_staging(root, db, cancel, report):
+    """One readback traversal also checks exact signed path/type coverage."""
+    from .exporting import ExportSource
+    from .transfer import locked_file, check_streams
+    tree = ExportSource(root, cancel); seen = 0
+    report.completed = 0; report.report('Verifying restored files', force=True)
+    with closing(tree.walk()) as walker:
+        for path, name, kind, info in walker:
+            check_cancel(cancel)
+            expected = db.execute('select kind,size,digest from entries where path=?', (name,)).fetchone()
+            if expected is None or expected[:2] != (kind, info.st_size if kind == 'file' else 0):
+                raise VaultError('Restored file list has changed.')
+            seen += 1
+            if kind == 'directory': continue
+            hashed = hashlib.sha256(); actual = 0
+            with locked_file(path, tree.paths) as content:
+                check_streams(path, tree.paths)
+                while chunk := content.read(CHUNK):
+                    check_cancel(cancel); hashed.update(chunk); actual += len(chunk)
+                    report.verified += len(chunk); report.report('Verifying restored files')
+                    if actual > expected[1]: raise VaultError('Restored data has changed.')
+            if actual != expected[1] or hashed.hexdigest() != expected[2]:
+                raise VaultError('Restored data has changed.')
+            report.completed += 1; report.report('Verifying restored files')
+    if seen != db.execute('select count(*) from entries').fetchone()[0]:
+        raise VaultError('Restored file list has changed.')
+    report.report('Verifying restored files', force=True)
 
 
 def verify_restored(root, signing_public, *, cancel=lambda: False):

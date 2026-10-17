@@ -17,10 +17,12 @@ def attach_pipe(name, handle_id, mode):
 
 
 if __name__ == '__main__':
-    if '--worker' in sys.argv or '--measure-size' in sys.argv:
+    if '--worker' in sys.argv or '--measure-size' in sys.argv or '--readonly' in sys.argv:
         if sys.stdin is None: attach_pipe('stdin', -10, 'r')
         if sys.stdout is None: attach_pipe('stdout', -11, 'w')
-        if '--measure-size' in sys.argv:
+        if '--readonly' in sys.argv:
+            from yka.readonly import main
+        elif '--measure-size' in sys.argv:
             from yka.vault_size import main
         else:
             from yka.worker import main

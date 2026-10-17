@@ -448,6 +448,12 @@ class ManageDialog(ModalDialog):
         elif action == 'inspect': self.populate()
 
     def populate(self):
+        selected = self.selected_key()
+        snapshot = (self.record.get("authorized_keys", []), self.record.get("devices", {}), self.record.get("generation"), self.window.devices, getattr(self.window, 'device_check_incomplete', False))
+        if getattr(self, "_keys_snapshot", None) == snapshot:
+            self.key_selection_changed(); return
+        import copy
+        self._keys_snapshot = copy.deepcopy(snapshot)
         self.keys.clearSelection(); self.keys.setSortingEnabled(False)
         entries = self.record.get('authorized_keys', []); self.keys.setRowCount(len(entries))
         for row, key in enumerate(entries):
@@ -455,13 +461,18 @@ class ManageDialog(ModalDialog):
             connected = next((s for d in self.window.devices if d['serial'] == key['serial'] for s in d['slots'] if s['slot'] == key['slot'] and s.get('public_key') == key['public_key']), None)
             fingerprint = hashlib.sha256(base64.b64decode(key['public_key'])).hexdigest().upper()
             values = [label.get('name', 'YubiKey'), f"{key['serial']} / {key['slot']:02X}", fingerprint[:8] + '…' + fingerprint[-4:],
-                'Yes' if connected else 'No',
+                'Yes' if connected else 'Unavailable' if getattr(self.window, 'device_check_incomplete', False) else 'No',
                 'Yes' if label.get('tested_generation') == self.record.get('generation') and label.get('tested_generation') is not None else 'No']
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value); item.setToolTip(fingerprint if column == 2 else value); item.setData(Qt.UserRole, dict(key))
                 if column >= 3: item.setTextAlignment(Qt.AlignCenter)
                 self.keys.setItem(row, column, item)
-        self.keys.setSortingEnabled(True); self.key_selection_changed()
+        self.keys.setSortingEnabled(True)
+        if selected:
+            for row in range(self.keys.rowCount()):
+                if self.keys.item(row, 0).data(Qt.UserRole).get("public_key") == selected.get("public_key"):
+                    self.keys.selectRow(row); break
+        self.key_selection_changed()
 
     def key_details(self):
         key = self.selected_key()
@@ -738,11 +749,18 @@ class NewKeyDialog(Form):
             self.fingerprint = hashlib.sha256(base64.b64decode(slot['key_public_der'])).hexdigest()
             visible_id = hashlib.sha256(base64.b64decode(slot.get('public_key') or slot['key_public_der'])).hexdigest()
             self.note('Existing key ID: ' + visible_id.upper())
-            dependencies = [r['name'] + ' — ' + r['path'] for r in self.window.model.records
-                if any(k['serial'] == device['serial'] and k['slot'] == slot['slot'] and k.get('public_key') == slot.get('public_key')
-                    for k in r.get('authorized_keys', []))]
+            dependencies, unknown = [], []
+            for record in self.window.model.records:
+                label = record['name'] + ' — ' + record['path']
+                if visible_id in record.get('key_tags', []) or any(k.get('public_key') == slot.get('public_key')
+                        for k in record.get('authorized_keys', []) if slot.get('public_key')):
+                    dependencies.append(label)
+                elif record.get('state') in ('Offline', 'Identity changed') or 'key_tags' not in record:
+                    unknown.append(label)
             text = QTextEdit(); text.setReadOnly(True); text.setMaximumHeight(100)
-            text.setPlainText('Known registered vaults using this key:\n' + ('\n'.join(dependencies) or 'No dependencies were found in the current list.'))
+            message = 'Vaults using this key:\n' + ('\n'.join(dependencies) or 'No matching vaults were found in the saved list.')
+            if unknown: message += '\n\nVaults that could not be checked:\n' + '\n'.join(unknown)
+            text.setPlainText(message)
             self.form.addRow(text)
             self.confirm_text = 'CONFIRM REPLACEMENT'
             self.note(f'Type "{self.confirm_text}" to confirm replacement.')
@@ -858,6 +876,8 @@ class DeviceDialog(ModalDialog):
     def updated(self, action, result, context):
         if action == 'inspect':
             self.load()
+            if result.get('inspection_incomplete'):
+                self.notice.setText('Some YubiKeys could not be checked. Reconnect them and refresh.')
             target = getattr(self, 'pending_slot', None)
             if target:
                 index = self.devices.findData(target[0])
@@ -883,7 +903,13 @@ class DeviceDialog(ModalDialog):
         return next((s for s in d['slots'] if s['slot'] == number), None)
 
     def populate(self):
-        d = self.device(); self.table.clearSelection(); self.table.setSortingEnabled(False); self.table.setRowCount(0)
+        d = self.device()
+        selected = self.table.selectionModel().selectedRows()
+        previous = self.table.item(selected[0].row(), 0).data(Qt.UserRole) if selected else None
+        if getattr(self, '_device_snapshot', object()) == d: self.selected_changed(); return
+        import copy
+        self._device_snapshot = copy.deepcopy(d)
+        self.table.clearSelection(); self.table.setSortingEnabled(False); self.table.setRowCount(0)
         if not d:
             self.notice.setText('Connect a YubiKey and click Refresh Devices. Inspection does not attempt your PIN or change the device.'); self.selected_changed(); return
         defaults = [name for field, name in [('pin_default', 'PIN'), ('puk_default', 'PUK'), ('management_default', 'management key')] if d.get(field)]
@@ -899,7 +925,11 @@ class DeviceDialog(ModalDialog):
             for col, value in enumerate(values):
                 item = QTableWidgetItem(value); item.setToolTip(fp if col == 2 else value)
                 item.setData(Qt.UserRole, (d['serial'], slot['slot'])); self.table.setItem(row, col, item)
-        self.table.setSortingEnabled(True); self.selected_changed()
+        self.table.setSortingEnabled(True)
+        if previous:
+            for row in range(self.table.rowCount()):
+                if self.table.item(row, 0).data(Qt.UserRole) == previous: self.table.selectRow(row); break
+        self.selected_changed()
 
     def selected_changed(self):
         s = self.slot(); d = self.device(); ready = not self.window.controller.busy and not getattr(self.window, 'hardware_busy', False)

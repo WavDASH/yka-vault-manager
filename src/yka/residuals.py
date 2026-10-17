@@ -51,11 +51,20 @@ def temporary_output(path, *, retain_on_error=None):
             if expected is not None and not retain: discard_file(path, expected)
 
 
-def discard_tree(path, expected):
+def discard_tree(path, expected, *, cancel=None):
     if not path.exists(): return
     with VaultGuard(path) as guard:
         if list(guard.root_identity) != list(expected):
             raise VaultError('The temporary folder changed. It was not removed.')
+        if cancel is not None:
+            _discard_contents(guard.root, cancel)
+            from .archive import check_cancel
+            from .move import deletable_reader, delete_handle
+            check_cancel(cancel)
+            guard.handle.Close(); guard.handle = None
+            with deletable_reader(path / '.manager.lock') as (_, handle): delete_handle(handle)
+            guard.prepare_rename(); delete_handle(guard.root_handle)
+            return
         guard.handle.Close(); guard.handle = None
         try: shutil.rmtree(path)
         except PermissionError:
@@ -64,6 +73,51 @@ def discard_tree(path, expected):
         from .move import delete_handle
         guard.prepare_rename()
         delete_handle(guard.root_handle)
+
+
+def _discard_contents(root, cancel):
+    """Bounded-memory deletion; yield to foreground work between entries.
+
+    Parent directories stay pinned, links are rejected, and directory deletion
+    checks the opened file ID again after acquiring a DELETE handle.
+    """
+    from .archive import check_cancel
+    from .windows import pin_directory
+    from .move import deletable_reader, delete_handle
+    stack = [(root, None, None, os.scandir(root))]
+    try:
+        while stack:
+            check_cancel(cancel)
+            path, pin, expected, entries = stack[-1]
+            entry = next(entries, None)
+            if entry is None:
+                entries.close()
+                if pin is not None:
+                    pin.Close(); stack[-1] = (path, None, expected, entries)
+                    handle = pin_directory(path, rename=True)
+                    try:
+                        info = win32file.GetFileInformationByHandle(handle)
+                        if (info[4], info[8], info[9]) != expected:
+                            raise VaultError('The temporary folder changed. It was not removed.')
+                        delete_handle(handle)
+                    finally: handle.Close()
+                stack.pop(); continue
+            if path == root and entry.name == '.manager.lock': continue
+            child = path / entry.name
+            if entry.is_dir(follow_symlinks=False):
+                pin = pin_directory(child)
+                try:
+                    info = win32file.GetFileInformationByHandle(pin)
+                    listing = os.scandir(child)
+                except BaseException:
+                    pin.Close(); raise
+                stack.append((child, pin, (info[4], info[8], info[9]), listing))
+            else:
+                with deletable_reader(child) as (_, handle): delete_handle(handle)
+    finally:
+        for _, pin, _, entries in reversed(stack):
+            entries.close()
+            if pin is not None: pin.Close()
 
 
 def prune_private_partials(directory, prefix=''):

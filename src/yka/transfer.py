@@ -74,9 +74,11 @@ def check_streams(source, paths):
 
 class Paths:
     """Only the exact owned WinFsp mount root may be a reparse point."""
-    def __init__(self, manager):
-        with manager.session_mutex:
-            self.mounts = [(Path(os.path.abspath(point)), session.mount_device) for _, session, point in manager.sessions.values() if session.process.poll() is None]
+    def __init__(self, manager=None):
+        self.mounts = []
+        if manager is not None:
+            with manager.session_mutex:
+                self.mounts = [(Path(os.path.abspath(point)), session.mount_device) for _, session, point in manager.sessions.values() if session.process.poll() is None]
         self.mount_keys = [(point, device, canonical_path(point)) for point, device in self.mounts]
         # Entries live only as long as their no-delete-sharing directory handle.
         # This is not a persistent path/alias cache.

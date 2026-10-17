@@ -19,7 +19,7 @@ from .windows import available_drives, output_identity, publish_output
 
 
 class Manager:
-    def __init__(self, progress=lambda _: None, destination=None):
+    def __init__(self, progress=lambda _: None, destination=None, *, defer_restore_recovery=False):
         self.progress = progress
         self.destination = destination
         self.sessions = {}
@@ -43,7 +43,7 @@ class Manager:
                     from .move import recover as recover_move
                     recover_move(self.registry, record)
                 except Exception: pass  # Keep both locations recorded for explicit recovery.
-            if record.get('restore_transaction'):
+            if record.get('restore_transaction') and not defer_restore_recovery:
                 try: recover(self.registry, record)
                 except Exception: pass  # Keep the journal; status remains a warning.
 
@@ -116,7 +116,7 @@ class Manager:
 
     def _auth(self, args, *, enroll=False):
         if args.get('serial') and args.get('slot'):
-            return {'device': piv.selected_device(args['serial'], args['slot'], enroll=enroll)}
+            return {'device': self._selected_device(args['serial'], args['slot'], enroll=enroll)}
         if args.get('passphrase'):
             return {'passphrase': args['passphrase']}
         raise VaultError('Select a YubiKey or enter a password.')
@@ -156,11 +156,13 @@ class Manager:
             with pinned_parents(Path(point)):
                 safe_path(point).mkdir(exist_ok=True)
 
+    def _selected_device(self, serial, slot, *, enroll=False):
+        from .readonly import call
+        return call(dict(action='selected', serial=serial, slot=slot, enroll=enroll), cancel=self.cancel.is_set)
+
     def inspect(self, args):
-        result = piv.inspect()
-        if not result:
-            return {'devices': [], 'message': 'No smart-card reader found. Check the YubiKey connection.'}
-        return {'devices': result}
+        from .readonly import inspect
+        return inspect(self.cancel.is_set)
 
     def create(self, args):
         if self.security_pending.is_set(): raise VaultError('Security event pending. Creation and mounting are blocked.')
@@ -172,7 +174,7 @@ class Manager:
         if args.get('mode', 'lite') not in ('lite', 'full'): raise VaultError('Select Lite or Full.')
         auth = {}
         if args.get('serial') and args.get('slot'):
-            auth['device'] = piv.selected_device(args['serial'], args['slot'], enroll=True)
+            auth['device'] = self._selected_device(args['serial'], args['slot'], enroll=True)
         if args.get('passphrase'): auth['passphrase'] = args['passphrase']
         if not auth: raise VaultError('Add a YubiKey or a password.')
         private_directory(root)
@@ -226,7 +228,7 @@ class Manager:
         saved = self.registry.by_path(root) or {}
         settings = validate_settings(args.get('mount_settings') or saved.get('mount_settings') or
             dict(mount_point=args.get('mount_point', ''), volume_label=args.get('volume_label', '')))
-        point = available_point(args.get('mount_point') or settings['mount_point'], root)
+        point = available_point(args.get('mount_point') or settings['mount_point'], root, self.registry)
         settings['mount_point'] = point
         guard = VaultGuard(root)
         session = None
@@ -258,6 +260,7 @@ class Manager:
                     if mount_state(BACKEND, saved['last_mount']['mount_point']):
                         raise VaultError('Another copy of this vault identity may still be mounted.')
             if self.security_pending.is_set(): raise VaultError('Security event received. Mount cancelled.')
+            available_point(point, root, self.registry)
             instance = uuid.uuid4().hex
             state = dict(mount_point=point, state='starting', instance=instance, uuid=verification['uuid'], signing_public=verification['signing_public'],
                 supervisor_pid=session.process.pid, supervisor_started=session.started_at,
@@ -276,7 +279,7 @@ class Manager:
             mount_launched = True
             session.send({'action': 'continue'})
             result = session.receive(timeout=75, cancel=lambda: self.security_pending.is_set() or self.cancel.is_set(),
-                timeout_message='SecureFS did not finish mounting. Use Recover Mount to check and clean up before retrying.')
+                timeout_message='The mount did not become ready in time. Check its status before trying again.')
             if result['event'] != 'mounted': raise VaultError('Mount was not confirmed.')
             session.mount_device = result['mount_device']
             state.update(state='mounted', supervisor_pid=session.process.pid, mount_device=session.mount_device)
@@ -340,11 +343,18 @@ class Manager:
             if not saved: return self._unmount(args)
             point = saved['mount_point']
             if not mount_state(BACKEND, point): return self._unmount(args)
-            if local and local[1].process.poll() is None: return self._unmount(args)
-            if not local and psutil.pid_exists(saved.get('supervisor_pid', 0)):
-                try: same_process = not saved.get('supervisor_started') or psutil.Process(saved['supervisor_pid']).create_time() == saved['supervisor_started']
-                except psutil.NoSuchProcess: same_process = False
-                if same_process: raise VaultError('The recorded supervisor process is still stopping. Close programs using the mounted folder, then retry Recover Mount.')
+            if local and local[1].process.poll() is None and not local[1].process.stdin.closed:
+                return self._unmount(args)
+            supervisor = None
+            if psutil.pid_exists(saved.get('supervisor_pid', 0)):
+                from .native import NATIVE
+                try:
+                    candidate = psutil.Process(saved['supervisor_pid'])
+                    if (candidate.create_time() == saved.get('supervisor_started')
+                        and path_key(candidate.exe()) == path_key(NATIVE)):
+                        supervisor = candidate
+                    else: raise VaultError('YKA could not confirm which vault owns this mount. No changes were made.')
+                except psutil.NoSuchProcess: pass
             def unmount_location():
                 if mount_state(BACKEND, point):
                     expected = saved.get('mount_device')
@@ -356,6 +366,20 @@ class Manager:
                     result = subprocess.run([str(BACKEND), 'unmount', point], stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW, timeout=30)
                     if result.returncode != 0 or mount_state(BACKEND, point): raise VaultError("Recovery unmount was not confirmed. Close open files and retry.")
+            if supervisor is not None:
+                # A disconnected supervisor retains its lease until its child exits.
+                # The explicit recovery request can stop only the saved NT device.
+                # Pin the vault identity while doing so; acquire its lease only after exit.
+                if not saved.get('mount_device') and not (args.get('confirm') == 'unmount-selected-location' and args.get('expected_mount_device')):
+                    raise VaultError('YKA could not confirm which vault owns this mount. No changes were made.')
+                with pinned_parents(root), guarded_reader(root / '.yka-key'):
+                    current = self._body(root)
+                    if (current['uuid'], current['signing_public']) != (record['uuid'], record['signing_public']):
+                        raise VaultError('The vault identity does not match.')
+                    unmount_location()
+                    try: supervisor.wait(timeout=15)
+                    except psutil.TimeoutExpired:
+                        raise VaultError('The vault is unmounted, but its previous session still needs cleanup.') from None
             lease = nullcontext(local[0]) if local else None
             if lease is None:
                 try: lease = VaultGuard(root)
@@ -499,6 +523,9 @@ class Manager:
             if isinstance(output, dict):
                 replace_existing = output.get('replace_existing'); output = output['path']
             self.note_output(output)
+            from .exporting import ExportProgress, measure_export
+            report = ExportProgress(self.progress)
+            plan = measure_export(root, safe_path(output), self.cancel.is_set, report)
             request = dict(action='sign', root=str(root), **self._auth(args), **self._expected(root))
             with self._prepared(request, args, guard) as (session, verified):
                 self._accept(root, verified)
@@ -506,11 +533,17 @@ class Manager:
                 def sign(digest):
                     session.send({'action': 'continue', 'message': base64.b64encode(digest).decode()})
                     return session.receive(cancel=self.cancel.is_set)
+                from .export_cleanup import remember, retain
+                def own_temporary(partial, target, stream, scratch):
+                    remember(self, guard, verified, partial, target, stream, scratch)
                 with pinned_parents(Path(output)):
                     return archive.export_archive(root, output, sign,
-                        progress=self.progress, cancel=self.cancel.is_set, replace_existing=replace_existing, on_residual=self.note_residual)
+                        progress=self.progress, cancel=self.cancel.is_set, replace_existing=replace_existing,
+                        on_temporary=own_temporary, on_retain=lambda: retain(self), plan=plan, report=report)
 
     def import_(self, args):
+        from .exporting import ExportProgress
+        report = ExportProgress(self.progress, restoring=True)
         from .precheck import new_folder
         new_folder(self, args['destination'])
         verified_info = {}
@@ -525,9 +558,10 @@ class Manager:
                 proof_digest=hashlib.sha256(archive.canonical(proof)).hexdigest(), authenticated=True,
                 allow_older_import=args.get('accept_backup_authorization') is True)
         result = archive.import_archive(args['archive'], args['destination'], verify,
-            authenticated=True, authenticate_first=True, cancel=self.cancel.is_set, progress=self.progress, before_publish=before_publish, on_residual=self.note_residual)
+            authenticated=True, authenticate_first=True, cancel=self.cancel.is_set, progress=self.progress, before_publish=before_publish, on_residual=self.note_residual, report=report)
         with VaultGuard(Path(result['path'])):
             result['record'] = self._accept(Path(result['path']), verified_info, name=args.get('name'))
+        report.report('Restore complete', force=True, complete=True)
         return result
 
     def check_restore_backup(self, args):
@@ -546,6 +580,8 @@ class Manager:
         return {k: body[k] for k in ('key_tags', 'recovery')}
 
     def restore_backup(self, args):
+        from .exporting import ExportProgress
+        report = ExportProgress(self.progress, restoring=True)
         if args.get('confirmed') is not True: raise VaultError('Confirm Restore Backup before continuing.')
         record = self.registry.get(args['record_id'])
         if not record.get('trusted'): raise VaultError('Authenticate this vault before restoring a backup.')
@@ -584,9 +620,12 @@ class Manager:
                     verified.clear(); verified.update(result)
                     os.replace(stage / '.import-proof.json', stage / '.verified-import-proof.json')
             incoming_identity = None
+            def own_stage(stage, target, stage_id, scratch):
+                from .restore_cleanup import remember
+                remember(self, record, guard, stage, target, stage_id, scratch)
             try:
                 archive.import_archive(args['archive'], destination, authenticate, authenticated=True,
-                    cancel=self.cancel.is_set, progress=self.progress, before_publish=prepare_commit, on_residual=self.note_residual, authenticate_first=True)
+                    cancel=self.cancel.is_set, progress=self.progress, before_publish=prepare_commit, on_residual=self.note_residual, authenticate_first=True, report=report, on_stage=own_stage)
                 with VaultGuard(destination) as incoming:
                     incoming_identity = list(incoming.root_identity)
                     archive.check_cancel(self.cancel.is_set)
@@ -625,6 +664,7 @@ class Manager:
             outcome['record'] = self.registry.get(record['id'])
         except Exception:
             outcome['cleanup_pending'] = True
+        report.report('Restore complete', force=True, complete=True)
         return outcome
 
     def restore_keyring(self, args):
@@ -850,7 +890,7 @@ class Manager:
             request = dict(action=args['action'], root=str(root), **authorization, **self._expected(root))
             request['restore_generation'] = self.registry.check_generation(dict(body, generation=None))
             if args['action'] == 'add-device':
-                request['new_device'] = piv.selected_device(args['new_serial'], args['new_slot'], enroll=True)
+                request['new_device'] = self._selected_device(args['new_serial'], args['new_slot'], enroll=True)
                 tag = hashlib.sha256(base64.b64decode(request['new_device']['public_key'])).hexdigest()
                 if tag in body['key_tags'] or any((d['serial'], d['slot']) == (request['new_device']['serial'], request['new_device']['slot']) for d in body['devices']):
                     raise VaultError('This key is already authorized.')
@@ -1025,12 +1065,23 @@ class Manager:
             return result
         except Exception as error:
             cancelled = self.cancel.is_set() or (isinstance(error, VaultError) and 'cancelled' in str(error).lower())
-            detail = str(error) if isinstance(error, (VaultError, OSError)) else 'The operation stopped. Inspect its output before retrying.'
+            from .errors import error_info
+            detail, diagnostic = error_info(error)
             if task: self.jobs.finish(task, 'Cancelled' if cancelled else 'Failed', detail)
-            if isinstance(error, OSError): raise VaultError(detail) from None
-            raise
+            if isinstance(error, VaultError): raise
+            public = VaultError(detail); public.diagnostic = diagnostic
+            raise public from None
         finally:
             self.task_context.task = None
+            if task and (task.get('restore_stage') or task.get('export_stage')):
+                # The operation's guards have closed. Attempt bounded cleanup
+                # now; the next startup makes one final attempt and forgets it.
+                import time
+                if task.get('export_stage'): from .export_cleanup import cleanup_task
+                else: from .restore_cleanup import cleanup_task
+                deadline = time.monotonic() + 1
+                try: cleanup_task(self, task['id'], cancel=lambda: time.monotonic() >= deadline or self.security_pending.is_set())
+                except Exception: pass
             if action in ('create','register','import','mount','unmount','recover-unmount','restore-backup','restore-keyring',
                 'relocate','move-vault','recover-move','transfer','add-device','remove-device','set-recovery','remove-recovery','security','resume'):
                 try:

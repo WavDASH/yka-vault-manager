@@ -19,15 +19,20 @@ BACKEND = PROJECT / 'vendor/securefs/securefs.exe'
 NATIVE = PROJECT / 'native/target/release/yka-crypto.exe'
 PLUGIN = PROJECT / 'vendor/age-plugin-yubikey-source/target/release/age-plugin-yubikey.exe'
 ERROR_CODES = frozenset(('config_mismatch', 'identity_mismatch', 'device_unauthorized',
-    'metadata_changed', 'backend_timeout', 'filesystem_failed', 'operation_failed'))
+    'metadata_changed', 'backend_timeout', 'filesystem_failed', 'operation_failed',
+    'password_failed', 'pin_incorrect', 'pin_blocked', 'keyring_invalid', 'device_failed',
+    'disk_full', 'drive_unavailable', 'file_in_use', 'permission_denied', 'path_missing', 'io_failed'))
 ERROR_STAGES = frozenset(('request', 'authentication', 'keyring_commit', 'securefs_create',
-    'securefs_unmount', 'keyring_create', 'securefs_mount', 'keyring_update', 'archive_sign'))
+    'securefs_unmount', 'keyring_create', 'securefs_mount', 'keyring_update', 'archive_sign', 'filesystem'))
 
 
 def diagnostic_fields(value):
     # Only fixed identifiers may enter logs. Never forward arbitrary backend text.
-    return {key: value[key] for key, allowed in (('code', ERROR_CODES), ('stage', ERROR_STAGES))
+    fields = {key: value[key] for key, allowed in (('code', ERROR_CODES), ('stage', ERROR_STAGES))
             if isinstance(value.get(key), str) and value[key] in allowed}
+    if type(value.get('system_error')) is int and 0 <= value['system_error'] <= 65535:
+        fields['system_error'] = value['system_error']
+    return fields
 
 
 class NativeSession:
@@ -123,7 +128,7 @@ class NativeSession:
         deadline = time.monotonic() + timeout
         while True:
             if cancel(): raise VaultError('The operation was cancelled. Check the vault status before trying again.')
-            if time.monotonic() > deadline: raise VaultError(timeout_message or 'The operation timed out. Check your YubiKey connection and the vault status before trying again.')
+            if time.monotonic() > deadline: raise VaultError(timeout_message or ('The YubiKey did not respond. Reconnect it and try again.' if self.device else 'The operation failed. See Diagnostics for details.'))
             try: line = self.lines.get(timeout=0.1)
             except queue.Empty: continue
             if not line or len(line) > 4 * 1024 * 1024:
@@ -142,7 +147,10 @@ class NativeSession:
                 new = message.get('new_device', False)
                 pin = self.new_pin if new else self.pin
                 if not pin: raise VaultError('Enter the PIV PIN to authorize this vault.')
-                signature = piv.sign(self.new_device if new else self.device, base64.b64decode(message['message']), pin, progress=self.progress)
+                from .readonly import call
+                signature = call(dict(action='sign', device=self.new_device if new else self.device, message=message['message'], pin=pin),
+                    timeout=max(.1, deadline - time.monotonic()), cancel=cancel, progress=self.progress)
+                pin = None
                 self.send({'signature': signature})
                 # Signing and age creation do not reuse a cached PIN for future unlocks.
                 if not new: self.pin = None

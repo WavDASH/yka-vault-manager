@@ -1,5 +1,5 @@
 diff --git a/src/key.rs b/src/key.rs
-index 9f0df81..6f2972e 100644
+index 9f0df81..fe55e67 100644
 --- a/src/key.rs
 +++ b/src/key.rs
 @@ -95,55 +95,8 @@ pub(crate) fn wait_for_readers() -> Result<Context, Error> {
@@ -60,7 +60,21 @@ index 9f0df81..6f2972e 100644
  
  fn open_sesame(
      op: impl Fn() -> Result<YubiKey, yubikey::Error>,
-@@ -732,7 +685,7 @@ impl Connection {
+@@ -724,6 +677,13 @@ impl Connection {
+             }
+         };
+         if let Err(e) = self.yubikey.verify_pin(pin.expose_secret().as_bytes()) {
++            // Fixed diagnostic callbacks; never forward a PIN or localized error text.
++            let code = match &e {
++                yubikey::Error::WrongPin { .. } => Some("YKA:PIN_INCORRECT"),
++                yubikey::Error::PinLocked => Some("YKA:PIN_BLOCKED"),
++                _ => None,
++            };
++            if let Some(code) = code { let _ = callbacks.message(code); }
+             return Ok(Err(identity::Error::Identity {
+                 index: self.identity_index,
+                 message: format!("{:?}", Error::YubiKey(e)),
+@@ -732,7 +692,7 @@ impl Connection {
          Ok(Ok(()))
      }
  
@@ -69,7 +83,7 @@ index 9f0df81..6f2972e 100644
          assert_eq!(self.tag, line.tag);
  
          // Check if the touch policy requires a touch.
-@@ -745,6 +698,8 @@ impl Connection {
+@@ -745,6 +705,8 @@ impl Connection {
              _ => false,
          };
  
@@ -78,7 +92,7 @@ index 9f0df81..6f2972e 100644
          // The YubiKey API for performing scalar multiplication takes the point in its
          // uncompressed SEC-1 encoding.
          let shared_secret = match decrypt_data(
-@@ -757,6 +712,8 @@ impl Connection {
+@@ -757,6 +719,8 @@ impl Connection {
              Err(_) => return Err(()),
          };
  

@@ -228,8 +228,8 @@ def pinned_parents(path):
 
 
 @contextmanager
-def new_file(path):
-    with pinned_parents(path) as checked:
+def new_file(path, *, paths=None):
+    with (pinned_parents(path) if paths is None else paths.parents(path)) as checked:
         with checked.open('xb') as output: yield output
 
 

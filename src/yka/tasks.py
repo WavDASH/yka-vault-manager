@@ -1,4 +1,4 @@
-"""Private recovery journal. Never stores credentials or file contents."""
+"""Short-lived ownership receipts for one cleanup attempt after interruption."""
 import json
 import os
 from pathlib import Path
@@ -9,8 +9,16 @@ import psutil
 from .archive import unique_json
 from .windows import VaultError, VaultGuard, safe_path, guarded_reader, private_directory
 
-TRACKED = {'restore-backup', 'create', 'mount', 'unmount', 'export', 'import', 'restore-keyring',
-           'add-device', 'remove-device', 'set-recovery', 'remove-recovery', 'move-vault', 'recover-move'}
+TRACKED = {'restore-backup', 'export'}
+
+
+def owner_finished(task):
+    try: alive = psutil.Process(task['pid']).create_time() == task['process_started']
+    except psutil.NoSuchProcess: alive = False
+    except (psutil.Error, KeyError, TypeError, ValueError): return False
+    if alive:
+        return task['pid'] == os.getpid() and task.get('state') in ('Completed', 'Failed', 'Cancelled')
+    return True
 
 
 class Tasks:
@@ -34,7 +42,7 @@ class Tasks:
                             raw = stream.read(32 * 1024 * 1024 + 1)
                             if len(raw) > 32 * 1024 * 1024: continue
                             task = unique_json(raw)
-                            if task.get('schema') == 1 and task.get('id') == path.stem and task.get('state') == 'Completed':
+                            if task.get('schema') == 1 and task.get('id') == path.stem and owner_finished(task) and not task.get('restore_stage') and not task.get('export_stage'):
                                 delete_handle(handle)
                     except (OSError, ValueError, TypeError, AttributeError, VaultError): continue
         except (OSError, VaultError): pass
@@ -84,7 +92,7 @@ class Tasks:
     def finish(self, task, state, detail=''):
         now = time.time()
         task.update(state=state, detail=detail, updated=now, ended=now); self.save(task)
-        if state == 'Completed':
+        if state in ('Completed', 'Failed', 'Cancelled') and not task.get('restore_stage') and not task.get('export_stage'):
             # Operation-specific recovery is durable in Registry. Completed
             # task journals are not transfer history or recovery authority.
             try:
@@ -92,6 +100,17 @@ class Tasks:
                     from .move import deletable_reader, delete_handle
                     with deletable_reader(self.path(task['id'])) as (_, handle): delete_handle(handle)
             except (OSError, VaultError): pass  # Retain the completed journal for a later sweep.
+
+    def forget(self, task):
+        """Delete the unchanged receipt, never a live operation's journal."""
+        from .move import deletable_reader, delete_handle
+        try:
+            with self.guard():
+                current = self._load(task['id'])
+                if current != task or not owner_finished(current): return False
+                with deletable_reader(self.path(task['id'])) as (_, handle): delete_handle(handle)
+                return True
+        except FileNotFoundError: return False
 
     def records(self):
         result = []

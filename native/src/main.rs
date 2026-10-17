@@ -12,6 +12,20 @@ use sha2::{Digest, Sha256};
 use std::{fs, io::{self, Read, Write}, path::{Path, PathBuf}, process::{Command, Stdio}, sync::{Arc, atomic::{AtomicBool, Ordering}}, time::{Duration, Instant}};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+#[derive(Debug)]
+enum AuthFailure { Password, Keyring, Device }
+impl std::fmt::Display for AuthFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "{}", self.code()) }
+}
+impl std::error::Error for AuthFailure {}
+impl AuthFailure {
+    fn code(&self) -> &'static str { match self { Self::Password=>"password_failed", Self::Keyring=>"keyring_invalid", Self::Device=>"device_failed" } }
+    fn message(&self) -> &'static str { match self {
+        Self::Password=>"Could not unlock with this password.",
+        Self::Keyring=>"The vault key file could not be verified.",
+        Self::Device=>"The operation failed. See Diagnostics for details.",
+    } }
+}
 const MAX_FRAME: usize = 4 * 1024 * 1024;
 static OUTPUT_LOST: AtomicBool = AtomicBool::new(false);
 thread_local! { static STAGE: std::cell::Cell<&'static str> = const { std::cell::Cell::new("request") }; }
@@ -83,6 +97,12 @@ struct Ui { prompted: Arc<AtomicBool> }
 impl Ui { fn new() -> Self { Self { prompted: Arc::new(AtomicBool::new(false)) } } }
 impl Callbacks for Ui {
     fn display_message(&self, m: &str) {
+        if matches!(m,"YKA:PIN_INCORRECT"|"YKA:PIN_BLOCKED") {
+            let blocked=m=="YKA:PIN_BLOCKED";
+            emit(json!({"event":"error","message":if blocked {"The YubiKey PIN is blocked."} else {"Incorrect YubiKey PIN."},
+                "code":if blocked {"pin_blocked"} else {"pin_incorrect"},"stage":"authentication"}));
+            return;
+        }
         let message=match m {
             "YKA:TOUCH"=>"Please touch the selected YubiKey to unlock this vault.",
             "YKA:CRYPTO"=>"The YubiKey is processing the unlock request. Please wait…",
@@ -252,7 +272,15 @@ fn replace_keyring(root: &Path, signed: &SignedKeyring, p: &Payload, original: &
 // kill cannot run Drop; the parent retains the lease and reports Unknown.
 struct MountCleanup<'a> { req: &'a Request, owner: Option<String>, child: std::process::Child }
 impl MountCleanup<'_> {
+    fn finished(&mut self) -> Result<bool> {
+        if self.child.try_wait()?.is_none() { return Ok(false); }
+        if !mounted(self.req)? { return Ok(true); }
+        // Another filesystem may reuse this path after our foreground child
+        // exits. Never unmount that replacement or retain our obsolete lease.
+        Ok(self.owner.as_ref().is_some_and(|owner| mount_device(self.req).is_ok_and(|current| current != *owner)))
+    }
     fn stop(&mut self) -> Result<()> {
+        if self.finished()? { return Ok(()); }
         if self.owner.is_none() {
             // This is our foreground child, before a mount was acknowledged.
             // Stop it before releasing the lease: it must not mount later.
@@ -267,7 +295,13 @@ impl MountCleanup<'_> {
     }
 }
 impl Drop for MountCleanup<'_> {
-    fn drop(&mut self) { while self.stop().is_err(){std::thread::sleep(Duration::from_secs(2));} }
+    fn drop(&mut self) {
+        if self.stop().is_ok() { return; }
+        // One automatic cleanup attempt. Keep ownership pinned while an explicit
+        // Recover Mount can unmount the exact recorded device from another process.
+        // Do not repeatedly issue destructive commands after losing our controller.
+        while !self.finished().unwrap_or(false) { std::thread::sleep(Duration::from_secs(2)); }
+    }
 }
 fn wait_child_exit(child: &mut std::process::Child, seconds: u64) -> Result<()> {
     let deadline=Instant::now()+Duration::from_secs(seconds);
@@ -550,7 +584,10 @@ fn main(){
     if let Err(error)=result {
         // Whitelist user-facing explanations; never forward raw backend/plugin output.
         let reason=error.to_string();
-        let message=if reason.contains("identity changed") || reason.contains("identity mismatch") || reason.contains("Untrusted volume") {
+        let auth_error=error.downcast_ref::<AuthFailure>();
+        let current_stage=STAGE.with(|s|s.get());
+        let message=if let Some(failure)=auth_error { failure.message() }
+        else if reason.contains("identity changed") || reason.contains("identity mismatch") || reason.contains("Untrusted volume") {
             "The vault identity does not match."
         } else if reason.contains("Current password required") {
             "Enter your current password to change it."
@@ -563,10 +600,16 @@ fn main(){
         } else if reason.contains("Mount target already occupied") {
             "The mount location is in use."
         } else if reason.contains("Keyring changed") || reason.contains("metadata changed") {
-            "Vault metadata changed. Operation stopped."
+            "Vault metadata changed. Try again."
+        } else if current_stage=="securefs_unmount" {
+            "The vault could not be unmounted. Close files using it and try again."
+        } else if current_stage=="securefs_mount" && error_code(&reason)=="backend_timeout" {
+            "The mount did not become ready in time. Check its status before trying again."
+        } else if matches!(current_stage,"securefs_create"|"securefs_mount") {
+            "SecureFS could not start. See Diagnostics for details."
         } else {
-            "Operation failed. Check your credentials and vault status."
+            "The operation failed. See Diagnostics for details."
         };
-        emit(json!({"event":"error","message":message,"code":error_code(&reason),"stage":STAGE.with(|s| s.get())}));std::process::exit(1);
+        emit(json!({"event":"error","message":message,"code":auth_error.map_or_else(||error_code(&reason),AuthFailure::code),"stage":current_stage}));std::process::exit(1);
     }
 }

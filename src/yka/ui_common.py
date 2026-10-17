@@ -192,6 +192,7 @@ class TaskDialog(QDialog):
         super().__init__(parent); self.setWindowTitle('Vault operation'); self.resize(500, 160); self.setMinimumWidth(500)
         self.cancellable = cancellable
         self.transfer = transfer
+        self.committing = False
         self.awaiting_restore = False
         if not cancellable: self.setWindowFlag(Qt.WindowCloseButtonHint, False)
         self.setWindowModality(Qt.WindowModal)
@@ -251,8 +252,12 @@ class TaskDialog(QDialog):
             else: self.bar.setRange(0, 0)
 
     def update_transfer(self, value):
-        if not self.transfer or not self.cancel_button.isEnabled(): return
+        if not self.transfer or (not self.cancel_button.isEnabled() and not self.committing): return
+        if self.awaiting_restore:
+            self.awaiting_restore = False; self.setWindowTitle('Restoring your backup'); self.bar.show()
         self.message.setText(value['current']); self.summary.setText(value['summary'])
+        if value.get('cancellable') is False:
+            self.committing = True; self.cancellable = False; self.cancel_button.setEnabled(False)
         percent = value.get('percent')
         if percent is None: self.bar.setRange(0, 0)
         else: self.bar.setRange(0, 100); self.bar.setValue(percent)

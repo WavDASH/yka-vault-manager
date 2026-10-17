@@ -9,6 +9,7 @@ A Windows desktop app for creating and managing encrypted folders with a **YubiK
 - **Portable backups** — Export and import signed `.yka` backups, or restore an earlier backup to the same verified vault.
 - **Safe file copying** — Copy files into or out of mounted vaults with optional content verification.
 - **Vault sizes** — View cached encrypted-folder sizes in the vault list and General settings.
+- **Safer operation handling** — Check mount locations before unlocking, isolate unresponsive YubiKeys, and recover interrupted mount sessions without closing unrelated mounts.
 - **Windows integration** — System tray, saved mount preferences, vault status monitoring, and optional automatic unmount requests.
 
 ## Getting started
@@ -39,7 +40,7 @@ flowchart TB
     SecureFS --> Storage["Encrypted vault folder"]
 ```
 
-The interface, vault management, and cryptographic operations are separate components. Python coordinates tasks while Rust handles unlock operations and supervises SecureFS mounts.
+The interface, vault management, and cryptographic operations are separate components. Python coordinates tasks while Rust handles unlock operations and supervises SecureFS mounts. Read-only PIV detection and signing use short-lived helpers with timeouts and cancellation; device setup remains explicitly confirmed.
 
 ## Build from source
 
@@ -55,7 +56,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1
 ```
 
-The portable application is generated under `dist/portable-1.1.0/`. To build the installer, also install **Inno Setup 6** and run `scripts/installer.ps1`. Install WinFsp before testing mounted vaults; building from source does not install the driver.
+The portable application is generated under `dist/portable-1.2.0/`. To build the installer, also install **Inno Setup 6** and run `scripts/installer.ps1`. Install WinFsp before testing mounted vaults; building from source does not install the driver.
 
 ## Project structure
 

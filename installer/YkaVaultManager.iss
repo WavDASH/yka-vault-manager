@@ -1,4 +1,4 @@
-#define AppVersion "1.1.0"
+#define AppVersion "1.2.0"
 [Setup]
 AppId={{D16CC63C-FA8D-4B3B-AC55-51C3764752D8}
 AppName=YKA Vault Manager

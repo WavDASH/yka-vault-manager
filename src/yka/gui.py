@@ -140,9 +140,13 @@ class Window(QMainWindow):
             # Reparenting this shared dialog before closing a Form can destroy
             # its HWND while Qt still reports isVisible() == True.
             self.task_dialog.hide(); self.task_dialog.deleteLater()
-            self.task_dialog = TaskDialog(origin, self.controller.cancel, transfer=request['action'] == 'transfer',
+            self.task_dialog = TaskDialog(origin, self.controller.cancel, transfer=request['action'] in ('transfer', 'export', 'restore-backup', 'import'),
                 cancellable=request['action'] != 'delete-vault')
             self.state.setText(title + '…'); self.task_dialog.begin(title, authentication_first=request['action'] in ('check-operation', 'check-restore-backup', 'restore-backup', 'import'))
+            if request['action'] == 'export':
+                self.task_dialog.message.setText('Preparing your backup…'); self.task_dialog.summary.clear()
+            elif request['action'] in ('restore-backup', 'import'):
+                self.task_dialog.message.setText('Authenticating your vault…'); self.task_dialog.summary.clear()
         self.controller.send(request, before_send=prepare)
         return True
 
@@ -161,7 +165,7 @@ class Window(QMainWindow):
         from shiboken6 import isValid
         item = self.operation_ui.pop(context.get('id'), None)
         if not item: return
-        continue_requested = self.task_dialog.cancel_button.isEnabled()
+        continue_requested = self.task_dialog.cancel_button.isEnabled() or self.task_dialog.committing
         owner = item['origin']
         if not isValid(owner): owner = self
         if not item.get('silent'):
@@ -280,7 +284,7 @@ class Window(QMainWindow):
                 from shiboken6 import isValid
                 if (not isValid(origin) or not origin.isVisible() or self.worker_dead or self.controller.busy
                     or self.security_unconfirmed or self.exiting or self.close_attempted or self.shutdown_started): return
-                message = 'Restore this vault from the selected backup? Its contents and unlock methods will return to the backup state. The current folder will be overwritten after verification. Its previous contents will be permanently deleted when restoration completes.'
+                message = 'Restore this backup? Current vault contents will be permanently replaced, and unlock methods will return to the backup state.'
                 if QMessageBox.warning(origin, 'Restore Backup', message, QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes: return
                 backup = dict(name=record['name'], path=source, **info)
                 credentials = auth(origin, 'Unlock Backup', record=backup)
@@ -441,6 +445,15 @@ class Window(QMainWindow):
         if not started:
             show_error(self, 'open-folder', 'Windows Explorer could not be started. Open the mounted drive manually, then try again.')
 
+    def connection_labels(self, records):
+        records = [dict(record) for record in records]
+        for record in records:
+            keys = record.get('authorized_keys', [])
+            connected = sum(any(d['serial'] == key['serial'] and any(s['slot'] == key['slot'] and s.get('public_key') == key['public_key'] for s in d['slots']) for d in self.devices) for key in keys)
+            if keys:
+                record['unlock_methods'] = f'YubiKey ({connected}/{len(keys)} connected)' + (' · Password' if record.get('recovery') else '')
+        return records
+
     def completed(self, action, result, context):
         if getattr(self, 'shutdown_started', False): return
         self.execution_state()
@@ -452,7 +465,11 @@ class Window(QMainWindow):
             self.finish_operation(action, context, '', result=result)
             self.update_actions()
             return
-        if action == 'inspect': self.devices = result.get('devices', [])
+        if action == 'inspect':
+            self.devices = result.get('devices', [])
+            self.device_check_incomplete = result.get('inspection_incomplete', False)
+            self.model.replace(self.connection_labels(self.model.records))
+            if result.get('message'): self.state.setText(result['message'])
         elif action in ('status', 'list'):
             records = result.get('records', [])
             self.sizes.update(records)
@@ -460,11 +477,7 @@ class Window(QMainWindow):
                 and not any(c['action'] in ('security', 'resume') for c in self.controller.pending.values())
                 and all(r.get('state') in ('mounted', 'Unmounted', 'Verification pending', 'Offline', 'Deletion incomplete') for r in records)):
                 self.security_unconfirmed = False
-            for record in records:
-                keys = record.get('authorized_keys', [])
-                connected = sum(any(d['serial'] == key['serial'] and any(s['slot'] == key['slot'] and s.get('public_key') == key['public_key'] for s in d['slots']) for d in self.devices) for key in keys)
-                if keys:
-                    record['unlock_methods'] = f'YubiKey ({connected}/{len(keys)} connected)' + (' · Password' if record.get('recovery') else '')
+            records = self.connection_labels(records)
             selected = self.selected()
             if getattr(self, 'select_after_refresh', None): selected = {'id': self.select_after_refresh}
             self.model.replace(records)
@@ -510,7 +523,7 @@ class Window(QMainWindow):
                 'test-unlock': 'Unlock successful.', 'add-device': 'Key added and tested.',
                 'remove-device': 'Authorization was removed.', 'set-recovery': 'Password updated.',
                 'remove-recovery': 'The password was removed from this vault.'}.get(action, 'Saved.')
-            if action == 'restore-backup' and result.get('cleanup_pending'): message += '\nRestoration completed, but temporary recovery files could not be deleted. Restart YKA to retry cleanup.'
+            if action == 'restore-backup' and result.get('cleanup_pending'): message += '\nRestoration completed. Some temporary files could not be removed.'
             if action == 'restore-backup': message += '\nRestored folder: ' + result['path']
             if action == 'export' and result.get('path'): message += '\nSaved to: ' + result['path']
             if result.get('keyring_cleanup_pending'):
@@ -543,6 +556,9 @@ class Window(QMainWindow):
         diagnostic = diagnostic_fields(context)
         if diagnostic: self.logs.append('Backend: ' + ', '.join(f'{k}={v}' for k, v in diagnostic.items()))
         if action == 'registration-info': return
+        if action == 'inspect':
+            self.devices = []; self.device_check_incomplete = True
+            self.controller.result.emit('inspect', {'devices': [], 'inspection_incomplete': True, 'message': message}, context)
         if action == 'size-cache':
             self.logs.append('Size cache: ' + message); return
         if self.mount_batch is not None and action in ('check-operation', 'mount', 'list', 'status', 'security', 'resume', 'protocol'):
@@ -565,6 +581,9 @@ class Window(QMainWindow):
         self.state.setText(message); self.logs.append(message)
         if 'transfer_progress' in context: self.task_dialog.update_transfer(context['transfer_progress'])
         else: self.task_dialog.update_message(message)
+        if context.get('transfer_progress', {}).get('cancellable') is False:
+            self.operation_ui[context['id']]['committing'] = True
+            self.update_actions()
         if self.destination_dialog is None:
             self.task_dialog.present(attention='touch' in message.lower())
     def update_actions(self, *_):
@@ -576,7 +595,7 @@ class Window(QMainWindow):
         self.unmount_button.setEnabled(ready and bool(record) and state not in ('Unmounted', 'Verification pending', 'Offline', 'Deletion incomplete'))
         self.unmount_button.setText('Clean Up' if state == 'unmounted-awaiting-cleanup' else 'Recover Mount' if state in RECOVERY_STATES else 'Unmount')
         self.open_button.setEnabled(state == 'mounted' and not self.worker_dead)
-        self.manage_button.setEnabled(ready and bool(record)); self.cancel_button.setEnabled(self.controller.busy and not any(c['action'] == 'delete-vault' for c in self.controller.pending.values()))
+        self.manage_button.setEnabled(ready and bool(record)); self.cancel_button.setEnabled(self.controller.busy and not any(c['action'] == 'delete-vault' for c in self.controller.pending.values()) and not any(item.get('committing') for item in self.operation_ui.values()))
         if hasattr(self, 'menu_actions'):
             for key in ('piv',): self.menu_actions[key].setEnabled(ready)
             self.menu_actions['mount-all'].setEnabled(ready and not self.security_unconfirmed and any(r.get('state') in ('Unmounted', 'Verification pending') for r in self.model.records))
@@ -588,7 +607,7 @@ class Window(QMainWindow):
     def risk(self):
         return getattr(self, 'hardware_busy', False) or self.security_unconfirmed or self.controller.busy or any(v.get('state') not in ('Unmounted', 'Verification pending', 'Offline', 'Deletion incomplete') for v in self.model.records)
     def execution_state(self):
-        transferring = not self.worker_dead and any(c['action'] in ('transfer', 'move-vault', 'recover-move') for c in self.controller.pending.values())
+        transferring = not self.worker_dead and any(c['action'] in ('transfer', 'export', 'restore-backup', 'import', 'move-vault', 'recover-move') for c in self.controller.pending.values())
         mounted = any(v.get('state') not in ('Unmounted', 'Verification pending', 'Offline', 'Deletion incomplete') for v in self.model.records)
         prevent = transferring or (mounted and self.settings.value('prevent_idle_sleep', False, type=bool))
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000001 if prevent else 0x80000000)
@@ -686,7 +705,8 @@ class Window(QMainWindow):
         self.show_main()
         if self.risk() and QMessageBox.question(self, 'Unmount and Exit', 'YKA will stop the current task and try to unmount all managed vaults. Continue?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes: return
         if self.worker_dead:
-            if self.risk(): QMessageBox.warning(self, 'Check mount status', 'The worker is unavailable. Check and unmount SecureFS volumes before exiting.'); return
+            from .exit_check import start
+            start(self); return
         self.exiting = True; self.exit_deadline = time.monotonic() + 40; self.power_event('application-exit')
     def retry_exit(self):
         import time
@@ -729,8 +749,7 @@ class Window(QMainWindow):
         for task_id in list(self.operation_ui):
             self.finish_operation('operation', {'id': task_id}, 'The background worker stopped. Check vault status before trying again.', failed=True)
         self.worker_dead = True; self.security_unconfirmed = True
-        for record in self.model.records: record['state'] = 'Unknown / worker stopped'
-        self.model.replace(list(self.model.records)); self.state.setText("The worker stopped unexpectedly. Vault mount status is unknown. Files may still be accessible."); self.update_actions(); self.execution_state()
+        self.model.replace([dict(record, state='Unknown / worker stopped') for record in self.model.records]); self.state.setText('YKA lost contact with its background process. Mount status needs to be checked.'); self.update_actions(); self.execution_state()
     def worker_finished(self, *_):
         if self.shutdown_started: QTimer.singleShot(0, self.close)
 

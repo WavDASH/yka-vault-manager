@@ -97,8 +97,9 @@ class Controller(QObject):
                     if not isinstance(reply.get('message'), str): self.protocol_failed(); return
                     if 'transfer' in reply:
                         value = reply['transfer']
-                        if (context['action'] != 'transfer' or not isinstance(value, dict)
+                        if (context['action'] not in ('transfer', 'export', 'restore-backup', 'import') or not isinstance(value, dict)
                             or not isinstance(value.get('current'), str) or not isinstance(value.get('summary'), str)
+                            or ('cancellable' in value and (type(value['cancellable']) is not bool or context['action'] not in ('restore-backup', 'import')))
                             or (value.get('percent') is not None and (type(value['percent']) is not int or not 0 <= value['percent'] <= 100))):
                             self.protocol_failed(); return
                         context = dict(context, transfer_progress=value)

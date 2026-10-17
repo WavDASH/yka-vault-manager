@@ -133,7 +133,7 @@ def run(manager, args):
             from .mount_settings import validate_settings, available_point
             config = validate_settings(args.get('mount_settings') or (record or {}).get('mount_settings') or
                 dict(mount_point=args.get('mount_point', ''), volume_label=args.get('volume_label', '')))
-            point = available_point(config['mount_point'], root)
+            point = available_point(args.get('mount_point') or config['mount_point'], root, manager.registry)
             guard.reserve(manager.registry.locks, 'identity:' + body['uuid'])
             guard.reserve(manager.registry.locks, 'mount:' + path_key(point))
             for other in manager.registry.records():

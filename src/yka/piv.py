@@ -4,10 +4,12 @@ No generate/reset/change_pin/change_puk/authenticate/change_management_key calls
 """
 import base64
 from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric import ec
 from ykman.pcsc import list_readers, ScardSmartCardConnection, YK_READER_NAME
 from smartcard.ExclusiveConnectCardConnection import ExclusiveConnectCardConnection
 from yubikit.core.smartcard import ApduError
+from yubikit.core import InvalidPinError
 from yubikit.piv import PivSession, SLOT, KEY_TYPE
 from .windows import VaultError
 
@@ -95,18 +97,6 @@ def _report(session, serial, *, slots=range(0x82, 0x96), credentials=True):
     return report
 
 
-def inspect():
-    results = []
-    try:
-        for reader in _readers():
-            with _connect(reader) as connection:
-                session = PivSession(connection)
-                results.append(_report(session, session.get_serial()))
-    except Exception:
-        raise VaultError('PIV check failed. No PIN or PUK attempt was made.') from None
-    return results
-
-
 def selected_device(serial, slot, *, enroll=False):
     if int(slot) not in range(0x82, 0x96):
         raise VaultError('No compatible P-256 key in the selected slot.')
@@ -137,7 +127,22 @@ def sign(device, message, pin, progress=lambda _: None):
         public.verify(signature, message, ec.ECDSA(hashes.SHA256()))
         progress('YubiKey signature verified. Continuing the operation…')
         return b64(signature)
+    except InvalidPinError as error:
+        failure = VaultError('The YubiKey PIN is blocked.' if error.attempts_remaining == 0 else 'Incorrect YubiKey PIN.')
+        failure.diagnostic = {'code': 'pin_blocked' if error.attempts_remaining == 0 else 'pin_incorrect', 'stage': 'authentication'}
+        raise failure from None
+    except VaultError: raise
+    except InvalidSignature:
+        failure = VaultError('The operation failed. See Diagnostics for details.')
+        failure.diagnostic = {'code': 'device_failed', 'stage': 'authentication'}
+        raise failure from None
+    except ApduError as error:
+        if int(error.sw) == 0x6983:
+            failure = VaultError('The YubiKey PIN is blocked.')
+            failure.diagnostic = {'code': 'pin_blocked', 'stage': 'authentication'}
+            raise failure from None
+        raise VaultError('The YubiKey did not respond. Reconnect it and try again.') from None
     except Exception:
-        raise VaultError("PIV signing failed. Check PIN, touch, and remaining attempts.") from None
+        raise VaultError('The YubiKey did not respond. Reconnect it and try again.') from None
     finally:
         connection.close()

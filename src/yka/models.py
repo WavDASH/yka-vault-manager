@@ -48,6 +48,13 @@ class VaultModel(QAbstractTableModel):
                     'mount-stopping': 'Stopping mount: recovery available', 'unknown': 'Unknown'}.get(value, str(value))
             return str(value).capitalize() if index.column() == 1 else str(value)
     def replace(self, records):
+        if records == self.records: return
+        if [r['id'] for r in records] == [r['id'] for r in self.records]:
+            for row, record in enumerate(records):
+                if self.records[row] != record:
+                    self.records[row] = record
+                    self.dataChanged.emit(self.index(row, 0), self.index(row, self.columnCount() - 1))
+            return
         self.beginResetModel(); self.records = records; self.endResetModel()
 
 

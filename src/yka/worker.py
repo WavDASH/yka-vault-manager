@@ -52,7 +52,7 @@ def main():
             payload.update(message=value['current'], transfer=value)
         else: payload['message'] = value
         emit(payload)
-    manager = Manager(progress, destination)
+    manager = Manager(progress, destination, defer_restore_recovery=True)
     def task(request):
         request_id = request.get('id')
         context.id = request_id; context.record_id = request.get('record_id')
@@ -74,18 +74,23 @@ def main():
             from .native import diagnostic_fields
             emit({'id': request_id, 'error': str(error), **diagnostic_fields(getattr(error, 'diagnostic', {}))})
         except Exception as error:
-            if request.get('action') == 'restore-backup':
-                # Report diagnostic codes, never raw exception text or credentials.
-                code = getattr(error, 'winerror', None) or getattr(error, 'errno', None)
-                detail = type(error).__name__ + (f', system error {code}' if isinstance(code, int) else '')
-                emit({'id': request_id, 'error': f'Restore did not complete ({detail}). Check the vault status before retrying. Close programs using the vault folder and check the drive connection.'})
-            else: emit({'id': request_id, 'error': 'Operation failed. Check vault status and components.'})
+            from .errors import error_info
+            from .native import diagnostic_fields
+            message, diagnostic = error_info(error)
+            emit({'id': request_id, 'error': message, **diagnostic_fields(diagnostic)})
         finally:
             for secret in ('pin', 'passphrase', 'new_pin', 'new_passphrase'): request.pop(secret, None)
             with task_lock: active.discard(request_id); cancelled.discard(request_id)
-            if not control and manager.security_pending.is_set():
-                (manager.resume if manager.resume_requested else manager.security)({'event': 'task-finished'})
+            try:
+                if not control and manager.security_pending.is_set():
+                    (manager.resume if manager.resume_requested else manager.security)({'event': 'task-finished'})
+            finally:
+                if not control: maintenance.finished()
+                elif request.get('action') == 'resume': maintenance.schedule()
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor, concurrent.futures.ThreadPoolExecutor(max_workers=1) as safety, concurrent.futures.ThreadPoolExecutor(max_workers=1) as monitor:
+        from .restore_cleanup import Maintenance
+        maintenance = Maintenance(manager, executor, output_lost)
+        maintenance.schedule()
         for raw in iter(lambda: sys.stdin.readline(4 * 1024 * 1024 + 1), ''):
             if len(raw) > 4 * 1024 * 1024: emit({'error': 'IPC size limit exceeded.'}); break
             try: request = json.loads(raw)
@@ -107,6 +112,7 @@ def main():
                 emit({'id': request.get('id'), 'result': {'cancel_requested': target}}); continue
             elif request.get('action') in ('status', 'list', 'tasks', 'size-cache'):
                 monitor.submit(task, request); continue
+            maintenance.enqueue()
             executor.submit(task, request)
         # Prevent queued tasks from clearing cancellation after parent EOF.
         output_lost.set(); manager.security_pending.set(); manager.cancel.set()

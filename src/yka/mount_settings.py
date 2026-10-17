@@ -53,7 +53,29 @@ def validate_settings(value):
     return dict(mount_point=point, volume_label=label, unlock=dict(unlock))
 
 
-def available_point(point, root):
+def check_isolation(point, root, registry):
+    from .registry import path_key
+    def overlaps(a, b):
+        a, b = Path(path_key(a)), Path(path_key(b))
+        return a == b or a in b.parents or b in a.parents
+    if overlaps(point, registry.directory):
+        raise VaultError('This location is reserved for YKA. Choose a different location.')
+    records = registry.records()
+    folders = [root]
+    for record in records:
+        folders.append(record['path'])
+        for kind in ('move_transaction', 'restore_transaction'):
+            transaction = record.get(kind) or {}
+            folders.extend(transaction[k] for k in ('source', 'destination', 'staging', 'rollback') if transaction.get(k))
+        mount = record.get('last_mount') or {}
+        if mount.get('mount_point') and overlaps(point, mount['mount_point']):
+            raise VaultError('This location overlaps another mount. Choose a different location.')
+    if any(overlaps(point, folder) for folder in folders):
+        raise VaultError('Choose a mount folder outside all encrypted vault folders.')
+
+
+def available_point(point, root, registry=None):
+    if registry is not None: check_isolation(point, root, registry)
     if len(point) == 2 and point[1] == ':' and point[0].isascii() and point[0].isalpha():
         if point.upper() not in available_drives(): raise VaultError('The preferred drive is in use. Choose another mount location.')
         return point.upper()

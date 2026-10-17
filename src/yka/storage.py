@@ -45,7 +45,9 @@ def parse_header(raw):
             config_sha256=body['config_sha256'], key_tags=sorted(tags), key_count=len(channels), recovery=body['recovery'] is not None,
             keyring_sha256=hashlib.sha256(raw).hexdigest(), devices=[], generation=None)
     except Exception as error:
-        raise VaultError('This vault key file is damaged or uses an unsupported format. Restore a trusted .yka backup.') from error
+        failure = VaultError('The vault key file could not be verified.')
+        failure.diagnostic = {'code': 'keyring_invalid', 'stage': 'authentication'}
+        raise failure from error
 
 
 def selected_root(path):
