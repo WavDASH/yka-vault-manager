@@ -36,6 +36,9 @@ class Manager:
         from .tasks import Tasks
         self.jobs = Tasks(self.registry.directory)
         self.task_context = threading.local()
+        if not defer_restore_recovery:
+            from .mount_cleanup import reconcile
+            reconcile(self)
         from .restore import recover
         for record in self.registry.records():
             if record.get('move_transaction') and not record['move_transaction'].get('committed'):

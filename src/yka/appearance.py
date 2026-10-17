@@ -30,7 +30,12 @@ def default_image(size=64, *, compact=True):
     # Render vector geometry independently at each physical resolution.
     image = QImage(size, size, QImage.Format_ARGB32); image.fill(Qt.transparent)
     p = QPainter(image)
-    p.setRenderHint(QPainter.Antialiasing); p.scale(size / 64, size / 64)
+    p.setRenderHint(QPainter.Antialiasing)
+    if compact:
+        p.scale(size / 64, size / 64)
+    else:
+        # Fill the tray frame without changing the application/taskbar artwork.
+        p.scale(size / 60, size / 60); p.translate(-2, -2)
     p.setPen(Qt.NoPen); p.setBrush(QColor('#1768a6')); p.drawRoundedRect(QRectF(2, 2, 60, 60), 12, 12)
     p.setPen(QPen(QColor('white'), 5)); p.setBrush(Qt.NoBrush); p.drawRoundedRect(QRectF(22, 13, 20, 25), 9, 9)
     p.setPen(Qt.NoPen); p.setBrush(QColor('white')); p.drawRoundedRect(QRectF(16, 29, 32, 24), 4, 4)

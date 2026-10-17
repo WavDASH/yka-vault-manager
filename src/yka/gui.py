@@ -400,7 +400,7 @@ class Window(QMainWindow):
         if record['state'] == 'mounted': self.vault_operation('unmount', record)
         elif record['state'] in RECOVERY_STATES: self.recover_mount(record)
         elif record['state'] in ('Unmounted', 'Verification pending'): self.vault_operation('mount', record)
-        else: ManageDialog(self, record).exec()
+        else: self.controller.send({'action': 'status'})
 
     def double_click(self, _):
         record = self.selected()
@@ -737,7 +737,11 @@ class Window(QMainWindow):
             elif msg.message == 0x0218:
                 if msg.wParam == 4: self.power_event('suspend-or-hibernate')
                 elif msg.wParam in (7, 18): self.controller.send({'action': 'resume', 'event': 'resume'})
-            elif msg.message in (0x0011, 0x0016): self.power_event('shutdown')
+            elif msg.message == 0x0011:  # WM_QUERYENDSESSION: start early.
+                self.power_event('shutdown')
+            elif msg.message == 0x0016:  # WM_ENDSESSION: false means cancelled.
+                if msg.wParam: self.controller.end_system_session()
+                else: self.controller.send({'action': 'resume', 'event': 'resume'})
         return super().nativeEvent(event_type, message)
     def worker_stopped(self):
         self.sizes.stop()

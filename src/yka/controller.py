@@ -68,6 +68,16 @@ class Controller(QObject):
         self.shutting_down = True
         self.process.closeWriteChannel()
 
+    def end_system_session(self):
+        # Windows confirmed session end. EOF activates worker cancellation and
+        # unmount independently of the GUI event loop. Never force-kill it.
+        # Keep this shorter than Windows' usual hung-application timeout.
+        from PySide6.QtCore import QSignalBlocker
+        with QSignalBlocker(self.process):
+            self.shutdown()
+            if self.process.state() != QProcess.NotRunning:
+                self.process.waitForFinished(2500)
+
     def cancel(self):
         for task_id, item in list(self.pending.items()):
             if item['action'] not in CONTROL_ACTIONS:

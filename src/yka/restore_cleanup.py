@@ -137,7 +137,10 @@ class Maintenance:
             with self.lock:
                 if self.waiting or self.disconnected.is_set() or self.manager.security_pending.is_set(): return
                 self.stop.clear(); self.pending = False
-            sweep(self.manager, cancel=lambda: self.stop.is_set() or self.disconnected.is_set() or self.manager.security_pending.is_set())
+            cancelled = lambda: self.stop.is_set() or self.disconnected.is_set() or self.manager.security_pending.is_set()
+            from .mount_cleanup import reconcile
+            reconcile(self.manager, cancel=cancelled)
+            sweep(self.manager, cancel=cancelled)
         except Exception: pass
         finally:
             with self.lock:

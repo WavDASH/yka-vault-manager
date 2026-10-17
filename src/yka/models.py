@@ -43,9 +43,11 @@ class VaultModel(QAbstractTableModel):
                 return 'On' if enabled else 'Off'
             value = record.get(field, '')
             if index.column() == 3:
-                return {'mounted': 'Mounted', 'mounted-supervisor-lost': 'Warning: supervisor lost',
+                detail = {'mounted': 'Mounted', 'mounted-supervisor-lost': 'Warning: supervisor lost',
                     'unknown-mount-owner': 'Unknown: mount owner', 'unmounted-awaiting-cleanup': 'Unmounted: cleanup pending',
                     'mount-stopping': 'Stopping mount: recovery available', 'unknown': 'Unknown'}.get(value, str(value))
+                if role == Qt.ToolTipRole: return detail
+                return detail if value in ('mounted', 'Unmounted', 'Offline') else 'Warning'
             return str(value).capitalize() if index.column() == 1 else str(value)
     def replace(self, records):
         if records == self.records: return
